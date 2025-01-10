@@ -1,0 +1,125 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String          @id @default(cuid())
+  email         String          @unique
+  password      String
+  name          String?
+  role          UserRole        @default(BUYER)
+  phone         String?
+  address       String?
+  listings      EnergyListing[]
+  transactions  Transaction[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model EnergyListing {
+  id              String          @id @default(cuid())
+  sellerId        String
+  seller          User            @relation(fields: [sellerId], references: [id])
+  
+  // Basic Information
+  title           String
+  description     String?
+  energyType      EnergyType
+  
+  // Location Details
+  location        String
+  state           String
+  pincode         String
+  address         String
+  
+  // Energy Details
+  totalCapacity   Float
+  availableUnits  Float
+  minPurchase     Float
+  maxPurchase     Float
+  
+  // Pricing
+  pricePerUnit    Float
+  discount        Float?
+  
+  // Additional Details
+  deliveryMethod  DeliveryMethod
+  sourceType      SourceType
+  certification   String?
+  
+  // Status
+  status          ListingStatus   @default(ACTIVE)
+  visibility      Boolean         @default(true)
+  featured        Boolean         @default(false)
+  
+  // Relations
+  transactions    Transaction[]
+  
+  // Timestamps
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  validUntil      DateTime?
+}
+
+model Transaction {
+  id            String            @id @default(cuid())
+  listingId     String
+  listing       EnergyListing     @relation(fields: [listingId], references: [id])
+  buyerId       String
+  buyer         User              @relation(fields: [buyerId], references: [id])
+  units         Float
+  pricePerUnit  Float
+  totalPrice    Float
+  status        TransactionStatus @default(PENDING)
+  buyerPublicKey String?          // Wallet address
+  txHash        String?           // Transaction hash
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+enum UserRole {
+  BUYER
+  SELLER
+}
+
+enum EnergyType {
+  SOLAR
+  WIND
+  HYDRO
+  BIOMASS
+  GEOTHERMAL
+}
+
+enum DeliveryMethod {
+  GRID
+  DIRECT
+  HYBRID
+}
+
+enum SourceType {
+  RESIDENTIAL
+  COMMERCIAL
+  INDUSTRIAL
+  UTILITY
+}
+
+enum ListingStatus {
+  ACTIVE
+  PENDING
+  SOLD_OUT
+  CANCELLED
+  EXPIRED
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
