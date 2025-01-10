@@ -1,6 +1,6 @@
-# Bijlee - P2P Energy Trading Platform
+# EnergyPro aka Bijlee - P2P Energy Trading Platform
 
-Bijlee is a decentralized peer-to-peer energy trading platform that enables users to buy and sell renewable energy directly. Built with Next.js and blockchain technology, it creates a transparent and efficient marketplace for renewable energy trading.
+EnergyPro is a decentralized peer-to-peer energy trading platform that enables users to buy and sell renewable energy directly. Built with Next.js and blockchain technology, it creates a transparent and efficient marketplace for renewable energy trading.
 
 ## Features
 
