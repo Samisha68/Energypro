@@ -1,16 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { Menu, X } from 'lucide-react'
+import { Link as ScrollLink } from 'react-scroll'
 
 const navItems = [
-  { name: 'About', href: '#about' },
-  // { name: 'Products', href: '#products' },
-  { name: 'Services', href: '#services' },
-  { name: 'Blog', href: '#blog' },
-  { name: 'Contact', href: '#contact' },
+  { name: 'About', href: 'about' },
+  { name: 'Services', href: 'services' },
+  { name: 'Contact', href: 'contact' },
 ]
 
 export default function Header() {
@@ -21,7 +19,12 @@ export default function Header() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center py-4 md:justify-start md:space-x-10">
           <div className="flex justify-start lg:w-0 lg:flex-1">
-            <Link href="/">
+            <ScrollLink
+              to="home"
+              smooth={true}
+              duration={500}
+              className="cursor-pointer"
+            >
               <motion.svg
                 whileHover={{ scale: 1.1, rotate: 10 }}
                 className="h-8 w-auto sm:h-10 text-blue-500"
@@ -36,7 +39,7 @@ export default function Header() {
                   d="M13 10V3L4 14h7v7l9-11h-7z"
                 />
               </motion.svg>
-            </Link>
+            </ScrollLink>
           </div>
           <div className="-mr-2 -my-2 md:hidden">
             <button
@@ -50,13 +53,16 @@ export default function Header() {
           </div>
           <nav className="hidden md:flex space-x-10">
             {navItems.map((item) => (
-              <Link
+              <ScrollLink
                 key={item.name}
-                href={item.href}
-                className="text-base font-medium text-gray-300 hover:text-blue-500 transition-all"
+                to={item.href}
+                smooth={true}
+                duration={500}
+                offset={-80} // Adjust if header overlaps content
+                className="text-base font-medium text-gray-300 hover:text-blue-500 transition-all cursor-pointer"
               >
                 {item.name}
-              </Link>
+              </ScrollLink>
             ))}
           </nav>
           <div className="hidden md:flex items-center justify-end md:flex-1 lg:w-0">
@@ -106,26 +112,20 @@ export default function Header() {
               <div className="mt-6">
                 <nav className="grid gap-y-8">
                   {navItems.map((item) => (
-                    <a
+                    <ScrollLink
                       key={item.name}
-                      href={item.href}
-                      className="-m-3 p-3 flex items-center rounded-md hover:bg-gray-700 transition-all"
+                      to={item.href}
+                      smooth={true}
+                      duration={500}
+                      offset={-80} 
+                      className="-m-3 p-3 flex items-center rounded-md hover:bg-gray-700 transition-all cursor-pointer text-gray-300"
+                      onClick={() => setIsOpen(false)}
                     >
-                      <span className="ml-3 text-base font-medium text-gray-300">
-                        {item.name}
-                      </span>
-                    </a>
+                      {item.name}
+                    </ScrollLink>
                   ))}
                 </nav>
               </div>
-            </div>
-            <div className="py-6 px-5 space-y-6">
-              <a
-                href="#"
-                className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 transition-all"
-              >
-                Try Now
-              </a>
             </div>
           </div>
         </div>
