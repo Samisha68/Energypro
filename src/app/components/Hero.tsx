@@ -1,7 +1,8 @@
 'use client';
 
+
 import { motion } from 'framer-motion';
-import Link from 'next/link';
+
 export default function Hero() {
   return (
     <div className="relative bg-gradient-to-r from-gray-900 via-blue-900 to-black overflow-hidden h-screen pt-20">
