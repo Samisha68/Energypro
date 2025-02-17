@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion'
 import { Zap, BarChart, Shield } from 'lucide-react'
 
+
 const features = [
   {
     name: 'Real-time Monitoring',
@@ -23,7 +24,8 @@ const features = [
 
 export default function Features() {
   return (
-    <div className="py-16 bg-gradient-to-r from-gray-800 via-gray-900 to-black">
+    <div id="about" className="py-16 bg-gradient-to-r from-gray-800 via-gray-900 to-black">
+      
       <div className="max-w-7xl mx-auto px-6 sm:px-8 lg:px-10">
         <div className="text-center">
           <motion.h2

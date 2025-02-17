@@ -4,7 +4,7 @@ import { Facebook, Twitter, Instagram, Linkedin } from 'lucide-react';
 export default function Footer() {
   return (
     <footer className="bg-gray-800">
-      <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:py-16 lg:px-8">
+      <div id="contact" className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:py-16 lg:px-8">
         <div className="xl:grid xl:grid-cols-3 xl:gap-8">
           <div className="space-y-8 xl:col-span-1">
             <svg
@@ -24,22 +24,19 @@ export default function Footer() {
               EnergyPro: Revolutionizing energy management with cutting-edge technology and sustainable solutions.
             </p>
             <div className="flex space-x-6">
-              <a href="#" className="text-gray-400 hover:text-gray-300">
-                <span className="sr-only">Facebook</span>
-                <Facebook className="h-6 w-6" />
-              </a>
-              <a href="#" className="text-gray-400 hover:text-gray-300">
+              
+              <a href="https://x.com/EnergyPro74" className="text-gray-400 hover:text-gray-300">
                 <span className="sr-only">Twitter</span>
                 <Twitter className="h-6 w-6" />
               </a>
-              <a href="#" className="text-gray-400 hover:text-gray-300">
+              {/* <a href="#" className="text-gray-400 hover:text-gray-300">
                 <span className="sr-only">Instagram</span>
                 <Instagram className="h-6 w-6" />
               </a>
               <a href="#" className="text-gray-400 hover:text-gray-300">
                 <span className="sr-only">LinkedIn</span>
                 <Linkedin className="h-6 w-6" />
-              </a>
+              </a> */}
             </div>
           </div>
           <div className="mt-12 grid grid-cols-2 gap-8 xl:mt-0 xl:col-span-2">
@@ -105,7 +102,7 @@ export default function Footer() {
                     </Link>
                   </li>
                   <li>
-                    <Link href="#" className="text-base text-gray-300 hover:text-white">
+                    <Link href="https://x.com/EnergyPro74/status/1891155130478706751" className="text-base text-gray-300 hover:text-white">
                       Blog
                     </Link>
                   </li>
@@ -146,7 +143,7 @@ export default function Footer() {
         </div>
         <div className="mt-12 border-t border-gray-700 pt-8">
           <p className="text-base text-gray-400 xl:text-center">
-            &copy; 2023 EnergyPro, Inc. All rights reserved.
+            &copy; 2025 EnergyPro, Inc. All rights reserved.
           </p>
         </div>
       </div>
