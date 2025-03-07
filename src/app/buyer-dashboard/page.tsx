@@ -143,7 +143,7 @@ export default function BuyerDashboard() {
   const connectWallet = async () => {
     try {
       await connect();
-    } catch (error) {
+    } catch {
       console.error('Error connecting wallet:', error);
       alert('Failed to connect wallet. Please try again.');
     }
