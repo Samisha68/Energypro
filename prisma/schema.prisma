@@ -53,6 +53,9 @@ model EnergyListing {
   sourceType      SourceType
   certification   String?
   
+  // Wallet Details
+  sellerWalletAddress String?     // Add this line
+  
   // Status
   status          ListingStatus   @default(ACTIVE)
   visibility      Boolean         @default(true)

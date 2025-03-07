@@ -1,10 +1,12 @@
-
+// src/app/seller-dashboard/page.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
 import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet } from 'lucide-react';
 import Link from 'next/link';
-import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/listing';
+import { Listing, EnergyType, DeliveryMethod, SourceType, ListingStatus } from '@/lib/types/listing';
+import { useSolanaWallet, getSolanaConnection } from '@/lib/solana-wallet';
+import { createSellerTokenAccount } from '@/lib/bijlee-exchange';
 
 interface ListingFormData {
   id?: string;
@@ -24,6 +26,7 @@ interface ListingFormData {
   sourceType: SourceType;
   certification?: string;
   discount?: number;
+  sellerWalletAddress: string;
 }
 
 export default function SellerDashboard() {
@@ -33,11 +36,10 @@ export default function SellerDashboard() {
   const [editingListing, setEditingListing] = useState<Listing | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isWalletConnected, setIsWalletConnected] = useState(false);
-  const [publicKey, setPublicKey] = useState<string | null>(null);
+  const [processingAction, setProcessingAction] = useState<boolean>(false);
+  const [creatingTokenAccount, setCreatingTokenAccount] = useState(false);
+  const { wallet, connected, connect, connecting } = useSolanaWallet();
   
-  const [walletProvider, setWalletProvider] = useState<any>(null);
-
   const initialFormState: ListingFormData = {
     title: '',
     description: '',
@@ -54,119 +56,27 @@ export default function SellerDashboard() {
     deliveryMethod: DeliveryMethod.GRID,
     sourceType: SourceType.RESIDENTIAL,
     certification: '',
-    discount: 0
+    discount: 0,
+    sellerWalletAddress: ''
   };
   const [formData, setFormData] = useState<ListingFormData>(initialFormState);
 
-  // Wallet Connection
-  const connectWallet = async () => {
-    try {
-      if (!walletProvider) {
-        const wallets = [];
-        if ((window as any)?.phantom?.solana) wallets.push("Phantom");
-        if ((window as any)?.solana) wallets.push("Solana");
-        if ((window as any)?.backpack?.solana) wallets.push("Backpack");
+  // Add new state for selected listing
+  const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
-        if (wallets.length === 0) {
-          alert('Please install a Solana wallet (Phantom, Solana, or Backpack)!');
-          window.open('https://phantom.app/', '_blank');
-          return;
-        }
-
-        if (wallets.length > 1) {
-          const walletChoice = window.confirm(
-            `Multiple wallets detected. Click OK to use ${wallets[0]} or Cancel to use ${wallets[1]}`
-          );
-           
-          setWalletProvider(walletChoice ? 
-            (window as any)?.phantom?.solana : 
-            (window as any)?.solana || (window as any)?.backpack?.solana
-          );
-        } else {
-          setWalletProvider((window as any)?.phantom?.solana || 
-                          (window as any)?.solana || 
-                          (window as any)?.backpack?.solana);
-        }
-      }
-
-      if (walletProvider) {
-        const resp = await walletProvider.connect();
-        setPublicKey(resp.publicKey.toString());
-        setIsWalletConnected(true);
-      }
-    } catch (error) {
-      console.error('Error connecting wallet:', error);
-      alert('Failed to connect wallet. Please try again.');
-    }
-  };
-
-  // Fetch Listings
+  // Fetch listings on component mount
   useEffect(() => {
     fetchListings();
   }, []);
 
-  // Update these parts in your SellerDashboard component
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isWalletConnected) {
-      alert('Please connect your wallet first');
-      return;
-    }
-    setError(null);
-    
-    try {
-      const processedFormData = {
-        ...formData,
-        ...(editingListing?.id && { id: editingListing.id }),
-        totalCapacity: Number(formData.totalCapacity),
-        availableUnits: Number(formData.availableUnits),
-        minPurchase: Number(formData.minPurchase),
-        maxPurchase: Number(formData.maxPurchase),
-        pricePerUnit: Number(formData.pricePerUnit),
-        discount: formData.discount ? Number(formData.discount) : null,
-        // sellerId will be extracted from JWT token in the API
-        energyType: formData.energyType,
-        deliveryMethod: formData.deliveryMethod,
-        sourceType: formData.sourceType,
-      };
-  
-      const response = await fetch('/api/listings', {
-        method: editingListing ? 'PUT' : 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(processedFormData),
-      });
-  
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to save listing');
-      }
-  
-      const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to save listing');
-      }
-  
-      await fetchListings();
-      setIsAddingListing(false);
-      setEditingListing(null);
-      setFormData(initialFormState);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to save listing';
-      setError(errorMessage);
-      console.error('Submission Error:', error);
-    }
-  };
+  // Fetch listings from your API
   const fetchListings = async () => {
     try {
-      const response = await fetch('/api/listings', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-  
+      setIsLoading(true);
+      // Important: Change the parameter to match your backend
+      // If your backend expects 'current' as the value for fetching user's listings
+      const response = await fetch('/api/listings?sellerId=current');
+
       if (!response.ok) {
         throw new Error('Failed to fetch listings');
       }
@@ -185,52 +95,225 @@ export default function SellerDashboard() {
     }
   };
 
-const handleDelete = async (id: string) => {
-  if (!confirm('Are you sure you want to delete this listing?')) return;
-
-  try {
-    const response = await fetch(`/api/listings?id=${id}`, {
-      method: 'DELETE',
-    });
-
-    const data = await response.json();
-    if (!data.success) {
-      throw new Error(data.error || 'Failed to delete listing');
+  // Handle input changes
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    
+    // Handle empty numeric inputs
+    if (type === 'number' && value === '') {
+      setFormData({
+        ...formData,
+        [name]: '' // Keep it as empty string, not 0
+      });
+    } else {
+      setFormData({
+        ...formData,
+        [name]: type === 'number' ? parseFloat(value) : value
+      });
     }
+  };
 
-    await fetchListings();
-  } catch (error) {
-    setError('Failed to delete listing. Please try again.');
-    console.error('Error:', error);
-  }
-};// Edit Listing
-  const handleEdit = (listing: Listing) => {
-    if (!isWalletConnected) {
-      alert('Please connect your wallet first');
+  // Handle form submission
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validate form data
+    try {
+      // Check numeric fields
+      if (formData.totalCapacity <= 0) throw new Error('Total capacity must be greater than 0');
+      if (formData.availableUnits <= 0) throw new Error('Available units must be greater than 0');
+      if (formData.availableUnits > formData.totalCapacity) throw new Error('Available units cannot exceed total capacity');
+      if (formData.minPurchase <= 0) throw new Error('Minimum purchase must be greater than 0');
+      if (formData.maxPurchase <= formData.minPurchase) throw new Error('Maximum purchase must be greater than minimum purchase');
+      if (formData.maxPurchase > formData.availableUnits) throw new Error('Maximum purchase cannot exceed available units');
+      if (formData.pricePerUnit <= 0) throw new Error('Price per unit must be greater than 0');
+      
+      // Check required string fields
+      if (!formData.title.trim()) throw new Error('Title is required');
+      if (!formData.location.trim()) throw new Error('Location is required');
+      if (!formData.state.trim()) throw new Error('State is required');
+      if (!formData.address.trim()) throw new Error('Address is required');
+      
+      // Validate wallet address (simple validation)
+      if (!formData.sellerWalletAddress.trim()) throw new Error('Seller wallet address is required');
+      if (formData.sellerWalletAddress.length < 32) throw new Error('Please enter a valid Solana wallet address');
+    } catch (error) {
+      if (error instanceof Error) {
+        setError(error.message);
+      } else {
+        setError('Validation failed');
+      }
       return;
     }
+    
+    setError(null);
+    setProcessingAction(true);
+    
+    try {
+      // Remove the id assignment - let the backend handle this
+      // The backend will use Prisma to create a proper database ID
+      
+      if (editingListing) {
+        // Update the listing in your backend
+        const backendResponse = await fetch('/api/listings', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: editingListing.id,
+            ...formData
+          }),
+        });
+        
+        if (!backendResponse.ok) {
+          const errorData = await backendResponse.json();
+          throw new Error(errorData.error || 'Failed to update listing');
+        }
+      } else {
+        // Create a new listing in your backend
+        const backendResponse = await fetch('/api/listings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(formData),
+        });
+        
+        if (!backendResponse.ok) {
+          const errorData = await backendResponse.json();
+          throw new Error(errorData.error || 'Failed to create listing');
+        }
+      }
+      
+      // Reset and refresh
+      setFormData(initialFormState);
+      setEditingListing(null);
+      setIsAddingListing(false);
+      
+      // Refresh listings
+      fetchListings();
+    } catch (error) {
+      console.error('Submission error:', error);
+      setError(error instanceof Error ? error.message : 'Failed to process listing');
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
+  // Edit listing
+  const handleEdit = (listing: Listing) => {
     setEditingListing(listing);
     setFormData({
       id: listing.id,
       title: listing.title,
       description: listing.description || '',
-      energyType: listing.energyType,
+      energyType: listing.energyType as EnergyType,
       location: listing.location,
       state: listing.state,
-      pincode: listing.pincode,
+      pincode: listing.pincode || '',
       address: listing.address,
       totalCapacity: listing.totalCapacity,
       availableUnits: listing.availableUnits,
       minPurchase: listing.minPurchase,
       maxPurchase: listing.maxPurchase,
       pricePerUnit: listing.pricePerUnit,
-      deliveryMethod: listing.deliveryMethod,
-      sourceType: listing.sourceType,
+      deliveryMethod: listing.deliveryMethod as DeliveryMethod,
+      sourceType: listing.sourceType as SourceType,
       certification: listing.certification || '',
-      discount: listing.discount || 0
+      discount: listing.discount || 0,
+      sellerWalletAddress: listing.sellerWalletAddress || ''
     });
     setIsAddingListing(true);
   };
+
+  // Delete listing
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this listing?')) return;
+    
+    setProcessingAction(true);
+    
+    try {
+      // Delete from backend
+      const response = await fetch(`/api/listings?id=${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete listing');
+      }
+
+      // Refresh listings
+      fetchListings();
+    } catch (error) {
+      setError('Failed to delete listing. Please try again.');
+      console.error('Error:', error);
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
+  // Create token account
+  const handleCreateTokenAccount = async () => {
+    if (!connected || !wallet) {
+      setError('Please connect your wallet first');
+      return;
+    }
+
+    // Get the seller's wallet address from the selected listing
+    const sellerWalletAddress = selectedListing?.sellerWalletAddress;
+
+    // Debug log to check the data
+    console.log('Selected Listing:', selectedListing);
+    console.log('Seller Wallet Address:', sellerWalletAddress);
+
+    // Check if seller wallet address is provided and valid
+    if (!sellerWalletAddress || sellerWalletAddress.trim() === '') {
+      setError('Please select a listing first');
+      return;
+    }
+
+    // Validate the wallet address format
+    if (sellerWalletAddress.length < 32) {
+      setError('Invalid seller wallet address in the selected listing');
+      return;
+    }
+
+    setCreatingTokenAccount(true);
+    setError(null);
+
+    try {
+      const connection = getSolanaConnection();
+      const result = await createSellerTokenAccount(
+        wallet,
+        connection,
+        sellerWalletAddress.trim()
+      );
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to create token account');
+      }
+
+      alert('Token account created successfully! You can now receive BIJLEE tokens.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to create token account');
+    } finally {
+      setCreatingTokenAccount(false);
+    }
+  };
+
+  // Handle wallet connection
+  const handleWalletConnect = async () => {
+    try {
+      setError(null);
+      await connect();
+    } catch (error) {
+      setError('Failed to connect wallet. Please try again.');
+      console.error('Wallet connection error:', error);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-blue-900">
       {/* Navigation */}
@@ -245,27 +328,73 @@ const handleDelete = async (id: string) => {
             </Link>
             
             <div className="flex items-center space-x-4">
-              <button
-                onClick={connectWallet}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
-                  isWalletConnected 
-                    ? 'bg-green-600/20 text-green-300 hover:bg-green-600/40' 
-                    : 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/40'
-                }`}
-              >
-                <Wallet className="w-5 h-5" />
-                <span>
-                  {isWalletConnected ? `${publicKey?.slice(0, 4)}...${publicKey?.slice(-4)}` : 'Connect Wallet'}
-                </span>
-              </button>
+              {!connected ? (
+                <button
+                  onClick={handleWalletConnect}
+                  disabled={connecting}
+                  className={`flex items-center space-x-2 px-4 py-2 bg-blue-600/20 text-blue-300 rounded-lg hover:bg-blue-600/40 transition-all duration-300 ${
+                    connecting ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                >
+                  {connecting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Connecting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wallet className="w-5 h-5" />
+                      <span>Connect Wallet</span>
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="flex items-center space-x-4">
+                  <select
+                    value={selectedListing?.id || ''}
+                    onChange={(e) => {
+                      const listing = listings.find(l => l.id === e.target.value);
+                      setSelectedListing(listing || null);
+                    }}
+                    className="px-4 py-2 bg-gray-700/50 text-white rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="">Select a listing</option>
+                    {listings.map((listing) => (
+                      <option key={listing.id} value={listing.id}>
+                        {listing.title} - {listing.sellerWalletAddress.substring(0, 6)}...{listing.sellerWalletAddress.substring(listing.sellerWalletAddress.length - 4)}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={handleCreateTokenAccount}
+                    disabled={creatingTokenAccount || !selectedListing}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
+                      creatingTokenAccount || !selectedListing
+                        ? 'bg-gray-600/20 text-gray-300 cursor-not-allowed'
+                        : 'bg-green-600/20 text-green-300 hover:bg-green-600/40'
+                    }`}
+                  >
+                    {creatingTokenAccount ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <span>Creating Token Account...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Wallet className="w-5 h-5" />
+                        <span>Create Token Account</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
 
               <button
                 onClick={() => {
-                  if (!isWalletConnected) {
-                    alert('Please connect your wallet first');
-                    return;
-                  }
                   setIsAddingListing(true);
+                  setEditingListing(null);
+                  setFormData(initialFormState);
                 }}
                 className="flex items-center space-x-2 px-4 py-2 bg-blue-600/20 text-blue-300 rounded-lg hover:bg-blue-600/40 transition-all duration-300"
               >
@@ -279,6 +408,13 @@ const handleDelete = async (id: string) => {
 
       {/* Main Content */}
       <div className="pt-20 px-4 container mx-auto pb-8">
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-500/10 border-l-4 border-red-500 text-red-300 p-4 mb-6">
+            {error}
+          </div>
+        )}
+
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-gray-800/50 rounded-xl p-6">
@@ -299,78 +435,79 @@ const handleDelete = async (id: string) => {
           </div>
         </div>
 
-        {error && (
-          <div className="bg-red-500/10 border-l-4 border-red-500 text-red-700 p-4 mb-6">
-            {error}
-          </div>
-        )}
-
         {/* Listings Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {listings.map((listing) => (
-            <div key={listing.id} className="bg-gray-800/50 rounded-xl p-6 hover:bg-gray-800/70 transition-colors">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-lg font-semibold text-white">{listing.title}</h3>
-                  <p className="text-gray-400 text-sm mt-1">{listing.description}</p>
+          {isLoading ? (
+            <div className="col-span-full flex justify-center items-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            </div>
+          ) : listings.length === 0 ? (
+            <div className="col-span-full text-center py-12">
+              <p className="text-gray-400">No listings yet. Click "New Listing" to add your first listing.</p>
+            </div>
+          ) : (
+            listings.map((listing) => (
+              <div key={listing.id} className="bg-gray-800/50 rounded-xl p-6 hover:bg-gray-800/70 transition-colors">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">{listing.title}</h3>
+                    <p className="text-gray-400 text-sm mt-1">{listing.description}</p>
+                  </div>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => handleEdit(listing)}
+                      className="p-2 text-blue-400 hover:bg-blue-400/10 rounded"
+                      disabled={processingAction}
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(listing.id)}
+                      className="p-2 text-red-400 hover:bg-red-400/10 rounded"
+                      disabled={processingAction}
+                    >
+                      <Trash className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => handleEdit(listing)}
-                    className="p-2 text-blue-400 hover:bg-blue-400/10 rounded"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(listing.id)}
-                    className="p-2 text-red-400 hover:bg-red-400/10 rounded"
-                  >
-                    <Trash className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
 
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center text-gray-300">
-                  <Package className="w-4 h-4 mr-2 text-blue-400" />
-                  <span>
-                    {listing.energyType} - {listing.availableUnits}/{listing.totalCapacity} kWh
-                  </span>
-                </div>
-                <div className="flex items-center text-gray-300">
-                  <MapPin className="w-4 h-4 mr-2 text-blue-400" />
-                  <span>{listing.location}, {listing.state}</span>
-                </div>
-                <div className="mt-4">
-                  <span className="text-xl font-bold text-blue-400">₹{listing.pricePerUnit}</span>
-                  <span className="text-gray-400 text-sm">/kWh</span>
-                  {listing.discount && listing.discount > 0 && (
-                    <span className="ml-2 text-green-400 text-sm">
-                      {listing.discount}% off
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center text-gray-300">
+                    <Package className="w-4 h-4 mr-2 text-blue-400" />
+                    <span>
+                      {listing.energyType} - {listing.availableUnits}/{listing.totalCapacity} kWh
                     </span>
+                  </div>
+                  <div className="flex items-center text-gray-300">
+                    <MapPin className="w-4 h-4 mr-2 text-blue-400" />
+                    <span>{listing.location}, {listing.state}</span>
+                  </div>
+                  <div className="mt-4">
+                    <span className="text-xl font-bold text-blue-400">₹{listing.pricePerUnit}</span>
+                    <span className="text-gray-400 text-sm">/kWh</span>
+                    {listing.discount && listing.discount > 0 && (
+                      <span className="ml-2 text-green-400 text-sm">
+                        {listing.discount}% off
+                      </span>
+                    )}
+                  </div>
+                  
+                  {/* Show wallet address if available */}
+                  {listing.sellerWalletAddress && (
+                    <div className="mt-1 text-xs text-gray-400 truncate">
+                      Wallet: {listing.sellerWalletAddress.substring(0, 6)}...{listing.sellerWalletAddress.substring(listing.sellerWalletAddress.length - 4)}
+                    </div>
                   )}
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
-
-        {isLoading && (
-          <div className="flex justify-center items-center min-h-[200px]">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          </div>
-        )}
-
-        {!isLoading && listings.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-gray-400">No listings yet. Click &quot;New Listing&quot; to add your first listing.</p>
-          </div>
-        )}
 
         {/* Add/Edit Form Modal */}
         {isAddingListing && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-gray-800 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 ">
+            <div className="bg-gray-800 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-white">
                   {editingListing ? 'Edit Listing' : 'Add New Listing'}
@@ -389,32 +526,55 @@ const handleDelete = async (id: string) => {
 
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="grid grid-cols-2 gap-4">
+                  {/* Seller Wallet Address - New Field */}
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-300">
+                      Your Solana Wallet Address
+                      <span className="text-red-400 ml-1">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="sellerWalletAddress"
+                      value={formData.sellerWalletAddress}
+                      onChange={handleChange}
+                      className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
+                      placeholder="Enter your Solana wallet address to receive payments"
+                      required
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      This address will be used by buyers to send BIJLEE token payments for your energy
+                    </p>
+                  </div>
+
                   <div className="col-span-2">
                     <label className="block text-sm font-medium text-gray-300">Title</label>
                     <input
                       type="text"
+                      name="title"
                       value={formData.title}
-                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     />
                   </div>
 
                   <div className="col-span-2">
-  <label className="block text-sm font-medium text-gray-300">Description</label>
-  <textarea
-    value={formData.description}
-    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-    className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
-    rows={3}
-  />
-</div>
+                    <label className="block text-sm font-medium text-gray-300">Description</label>
+                    <textarea
+                      name="description"
+                      value={formData.description}
+                      onChange={handleChange}
+                      className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
+                      rows={3}
+                    />
+                  </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-300">Energy Type</label>
                     <select
+                      name="energyType"
                       value={formData.energyType}
-                      onChange={(e) => setFormData({ ...formData, energyType: e.target.value as EnergyType })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     >
@@ -427,8 +587,9 @@ const handleDelete = async (id: string) => {
                   <div>
                     <label className="block text-sm font-medium text-gray-300">Source Type</label>
                     <select
+                      name="sourceType"
                       value={formData.sourceType}
-                      onChange={(e) => setFormData({ ...formData, sourceType: e.target.value as SourceType })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     >
@@ -442,8 +603,9 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Location</label>
                     <input
                       type="text"
+                      name="location"
                       value={formData.location}
-                      onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     />
@@ -453,8 +615,9 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">State</label>
                     <input
                       type="text"
+                      name="state"
                       value={formData.state}
-                      onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     />
@@ -464,8 +627,9 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Pincode</label>
                     <input
                       type="text"
+                      name="pincode"
                       value={formData.pincode}
-                      onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     />
@@ -475,8 +639,9 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Full Address</label>
                     <input
                       type="text"
+                      name="address"
                       value={formData.address}
-                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     />
@@ -486,11 +651,15 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Total Capacity (kWh)</label>
                     <input
                       type="number"
-                      value={formData.totalCapacity}
-                      onChange={(e) => setFormData({ ...formData, totalCapacity: Number(e.target.value) })}
+                      name="totalCapacity"
+                      value={formData.totalCapacity || ''}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       min="0"
+                      step="0.01"
                       required
+                      // Disable editing total capacity for existing listings
+                      disabled={!!editingListing}
                     />
                   </div>
 
@@ -498,10 +667,13 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Available Units (kWh)</label>
                     <input
                       type="number"
-                      value={formData.availableUnits}
-                      onChange={(e) => setFormData({ ...formData, availableUnits: Number(e.target.value) })}
+                      name="availableUnits"
+                      value={formData.availableUnits || ''}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       min="0"
+                      max={formData.totalCapacity ? String(formData.totalCapacity) : undefined}
+                      step="0.01"
                       required
                     />
                   </div>
@@ -510,10 +682,13 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Min Purchase (kWh)</label>
                     <input
                       type="number"
-                      value={formData.minPurchase}
-                      onChange={(e) => setFormData({ ...formData, minPurchase: Number(e.target.value) })}
+                      name="minPurchase"
+                      value={formData.minPurchase || ''}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       min="0"
+                      max={formData.availableUnits ? String(formData.availableUnits) : undefined}
+                      step="0.01"
                       required
                     />
                   </div>
@@ -522,10 +697,13 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Max Purchase (kWh)</label>
                     <input
                       type="number"
-                      value={formData.maxPurchase}
-                      onChange={(e) => setFormData({ ...formData, maxPurchase: Number(e.target.value) })}
+                      name="maxPurchase"
+                      value={formData.maxPurchase || ''}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
-                      min="0"
+                      min={formData.minPurchase ? String(formData.minPurchase) : "0"}
+                      max={formData.availableUnits ? String(formData.availableUnits) : undefined}
+                      step="0.01"
                       required
                     />
                   </div>
@@ -534,8 +712,9 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Price per Unit (₹/kWh)</label>
                     <input
                       type="number"
-                      value={formData.pricePerUnit}
-                      onChange={(e) => setFormData({ ...formData, pricePerUnit: Number(e.target.value) })}
+                      name="pricePerUnit"
+                      value={formData.pricePerUnit || ''}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       min="0"
                       step="0.01"
@@ -546,8 +725,9 @@ const handleDelete = async (id: string) => {
                   <div>
                     <label className="block text-sm font-medium text-gray-300">Delivery Method</label>
                     <select
+                      name="deliveryMethod"
                       value={formData.deliveryMethod}
-                      onChange={(e) => setFormData({ ...formData, deliveryMethod: e.target.value as DeliveryMethod })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     >
@@ -561,8 +741,9 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Certification (Optional)</label>
                     <input
                       type="text"
+                      name="certification"
                       value={formData.certification || ''}
-                      onChange={(e) => setFormData({ ...formData, certification: e.target.value })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                     />
                   </div>
@@ -571,8 +752,9 @@ const handleDelete = async (id: string) => {
                     <label className="block text-sm font-medium text-gray-300">Discount % (Optional)</label>
                     <input
                       type="number"
+                      name="discount"
                       value={formData.discount || ''}
-                      onChange={(e) => setFormData({ ...formData, discount: Number(e.target.value) })}
+                      onChange={handleChange}
                       className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       min="0"
                       max="100"
@@ -580,6 +762,7 @@ const handleDelete = async (id: string) => {
                   </div>
                 </div>
 
+                {/* Action Buttons */}
                 <div className="flex justify-end space-x-4">
                   <button
                     type="button"
@@ -589,14 +772,27 @@ const handleDelete = async (id: string) => {
                       setFormData(initialFormState);
                     }}
                     className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+                    disabled={processingAction}
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    disabled={processingAction}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      processingAction
+                        ? 'bg-blue-700/50 text-blue-300 cursor-not-allowed'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
                   >
-                    {editingListing ? 'Update Listing' : 'Create Listing'}
+                    {processingAction ? (
+                      <div className="flex items-center">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Processing...
+                      </div>
+                    ) : (
+                      editingListing ? 'Update Listing' : 'Create Listing'
+                    )}
                   </button>
                 </div>
               </form>

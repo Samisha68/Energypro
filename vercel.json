@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "env": {
+    "NEXT_PUBLIC_SOLANA_RPC_URL": "https://api.devnet.solana.com",
+    "NEXT_PUBLIC_SOLANA_NETWORK": "devnet",
+    "NEXT_PUBLIC_BIJLEE_PROGRAM_ID": "71p7sfU3FKyP2hv9aVqZV1ha6ZzJ2VkReNjsGDoqtdRQ",
+    "NEXT_PUBLIC_BIJLEE_TOKEN_MINT": "HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86"
+  }
+} 
