@@ -56,7 +56,7 @@ export async function GET(request: Request) {
     if (sellerId === 'current') {
       try {
         actualSellerId = await getCurrentUserId();
-      } catch (error) {
+      } catch {
         return NextResponse.json(
           { success: false, error: 'Authentication required to view your listings' },
           { status: 401 }

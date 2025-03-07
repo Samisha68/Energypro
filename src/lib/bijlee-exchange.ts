@@ -669,7 +669,7 @@ export async function completeTransaction(
           success: true,
           tx
         };
-      } catch (methodError) {
+      } catch {
         // Try the snake_case version if camelCase fails
         console.log('Trying snake_case method name as fallback');
         
@@ -751,7 +751,7 @@ export async function cancelTransaction(
           success: true,
           tx
         };
-      } catch (methodError) {
+      } catch {
         // Try the snake_case version if camelCase fails
         console.log('Trying snake_case method name as fallback');
         

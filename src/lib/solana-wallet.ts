@@ -91,7 +91,7 @@ export const useSolanaWallet = () => {
           setPublicKey(resp.publicKey.toString());
           setConnected(true);
           return;
-        } catch (error) {
+        } catch {
           // If connecting with trusted fails, attempt normal connect
           console.log('Not a trusted app, trying normal connect');
         }
