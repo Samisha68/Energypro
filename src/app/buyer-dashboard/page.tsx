@@ -1,14 +1,22 @@
+// src/app/buyer-dashboard/page.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Wallet, Search, Package, MapPin} from 'lucide-react';
+import { Wallet, Search, Package, MapPin, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
+import { PublicKey } from '@solana/web3.js';
+import { useSolanaWallet, formatPublicKey, getSolanaConnection } from '@/lib/solana-wallet';
+import { processPurchase } from '@/lib/bijlee-exchange'
+import { getAssociatedTokenAddress } from '@solana/spl-token';
+
+// Constants
+const BIJLEE_TOKEN_MINT = new PublicKey("HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86");
 
 // Types
 interface Listing {
   id: string;
   sellerId: string;
-  seller: {
+  seller?: {
     name: string | null;
     email: string;
   };
@@ -28,35 +36,41 @@ interface Listing {
   sourceType: string;
   certification: string | null;
   status: string;
-  visibility: boolean;
-  featured: boolean;
+  visibility: boolean | string;
+  featured: boolean | string;
+  sellerWalletAddress: string;
 }
-
-
-
 
 export default function BuyerDashboard() {
   // State Management
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isWalletConnected, setIsWalletConnected] = useState(false);
-  const [publicKey, setPublicKey] = useState<string | null>(null);
   const [selectedOffer, setSelectedOffer] = useState<Listing | null>(null);
   const [quantity, setQuantity] = useState<number>(0);
-  const [walletProvider, setWalletProvider] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [processingPurchase, setProcessingPurchase] = useState(false);
+  const [purchaseSuccess, setPurchaseSuccess] = useState<boolean>(false);
+  const [transactionSignature, setTransactionSignature] = useState<string | null>(null);
+  const [buyerTokenBalance, setBuyerTokenBalance] = useState<number | null>(null);
+  const [transactionDetails, setTransactionDetails] = useState<string | null>(null);
+
+  // Solana wallet integration
+  const { wallet, connected, connect, connecting, publicKey } = useSolanaWallet();
 
   // Fetch listings on component mount
   useEffect(() => {
     fetchListings();
-    checkWalletConnection();
-  }, []);
+    if (connected && publicKey) {
+      checkTokenBalance(publicKey);
+    }
+  }, [connected, publicKey]);
 
   // Fetch listings from API
   const fetchListings = async () => {
     try {
       setIsLoading(true);
+      // Don't add any sellerId param here to get all listings
       const response = await fetch('/api/listings');
 
       if (!response.ok) {
@@ -68,7 +82,31 @@ export default function BuyerDashboard() {
         throw new Error(data.error || 'Failed to fetch listings');
       }
 
-      setListings(data.data);
+      console.log('Fetched listings:', data.data);
+      
+      // Normalize the data to ensure consistent types
+      const normalizedListings = data.data.map((listing: any) => ({
+        ...listing,
+        // Ensure numeric properties are numbers
+        totalCapacity: Number(listing.totalCapacity),
+        availableUnits: Number(listing.availableUnits),
+        minPurchase: Number(listing.minPurchase),
+        maxPurchase: Number(listing.maxPurchase),
+        pricePerUnit: Number(listing.pricePerUnit),
+        discount: listing.discount ? Number(listing.discount) : null,
+        // Ensure boolean values are actual booleans
+        visibility: typeof listing.visibility === 'string' 
+          ? listing.visibility.toLowerCase() === 'true' 
+          : Boolean(listing.visibility)
+      }));
+      
+      setListings(normalizedListings.filter((listing: Listing) => 
+        // Only show active and visible listings with available units
+        listing.status === 'ACTIVE' && 
+        Boolean(listing.visibility) === true &&
+        listing.availableUnits > 0
+      ));
+      
       setError(null);
     } catch (error) {
       setError('Failed to load listings. Please try again later.');
@@ -78,39 +116,33 @@ export default function BuyerDashboard() {
     }
   };
 
-  // Wallet Connection Check
-  const checkWalletConnection = async () => {
+  // Check BIJLEE token balance
+  const checkTokenBalance = async (walletAddress: string) => {
     try {
-      const solanaProvider = (window as any)?.solana;
-      const phantomProvider = (window as any)?.phantom?.solana;
-      const backpackProvider = (window as any)?.backpack?.solana;
-      const selectedProvider = solanaProvider || phantomProvider || backpackProvider;
+      const connection = getSolanaConnection();
+      
+      try {
+        const tokenAddress = await getAssociatedTokenAddress(
+          BIJLEE_TOKEN_MINT,
+          new PublicKey(walletAddress)
+        );
 
-      if (selectedProvider) {
-        setWalletProvider(selectedProvider);
-        if (selectedProvider.isConnected) {
-          const resp = await selectedProvider.connect({ onlyIfTrusted: true });
-          setPublicKey(resp.publicKey.toString());
-          setIsWalletConnected(true);
-        }
+        const tokenAccount = await connection.getTokenAccountBalance(tokenAddress);
+        setBuyerTokenBalance(Number(tokenAccount.value.uiAmount));
+      } catch (e) {
+        console.log("Token account may not exist yet:", e);
+        setBuyerTokenBalance(0);
       }
     } catch (error) {
-      console.error('Error checking wallet connection:', error);
+      console.error('Error checking token balance:', error);
+      setBuyerTokenBalance(null);
     }
   };
 
   // Connect Wallet
   const connectWallet = async () => {
     try {
-      if (!walletProvider) {
-        alert('Please install a Solana wallet (Phantom, Solana, or Backpack)!');
-        window.open('https://phantom.app/', '_blank');
-        return;
-      }
-
-      const resp = await walletProvider.connect();
-      setPublicKey(resp.publicKey.toString());
-      setIsWalletConnected(true);
+      await connect();
     } catch (error) {
       console.error('Error connecting wallet:', error);
       alert('Failed to connect wallet. Please try again.');
@@ -119,27 +151,72 @@ export default function BuyerDashboard() {
 
   // Handle Purchase
   const handlePurchase = async () => {
-    if (!isWalletConnected || !selectedOffer || !quantity) {
-      alert('Please connect wallet and select quantity first');
-      return;
+    if (!connected || !wallet) {
+      try {
+        await connect();
+        return; // We'll exit and let the useEffect trigger a re-render
+      } catch (error) {
+        setError('Failed to connect wallet. Please try again.');
+        return;
+      }
     }
   
-    try {
-      // Calculate the exact total with network fee
-      const subtotal = selectedOffer.pricePerUnit * quantity;
-      
-      const totalAmount = subtotal; // Remove network fee from total since it's handled separately
+    if (!selectedOffer || !quantity) {
+      alert('Please select quantity first');
+      return;
+    }
+    
+    setError(null);
+    setProcessingPurchase(true);
+    setPurchaseSuccess(false);
+    setTransactionSignature(null);
+    setTransactionDetails(null);
   
+    try {
+      // Check if buyer has enough tokens
+      if (buyerTokenBalance === null) {
+        await checkTokenBalance(publicKey!);
+      }
+      
+      const totalCost = selectedOffer.pricePerUnit * quantity;
+      const networkFee = totalCost * 0.005; // 0.5% fee
+      const totalPurchaseCost = totalCost + networkFee;
+      
+      if (buyerTokenBalance !== null && buyerTokenBalance < totalPurchaseCost) {
+        throw new Error(`Insufficient BIJLEE tokens. You need ${totalPurchaseCost.toFixed(2)} but have ${buyerTokenBalance.toFixed(2)}`);
+      }
+      
+      const connection = getSolanaConnection();
+      
+      // Use the seller's wallet address for the transaction
+      const sellerWalletAddress = selectedOffer.sellerWalletAddress;
+      
+      // Call the processPurchase function from bijlee-exchange.ts
+      const result = await processPurchase(
+        wallet,
+        connection,
+        selectedOffer.id, // This should be the listing pubkey on Solana
+        selectedOffer.id, // This is the listing ID in your database
+        sellerWalletAddress, // This is the seller's pubkey
+        quantity, // Number of units to purchase
+        selectedOffer.pricePerUnit // Price per unit in rupees
+      );
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to process purchase');
+      }
+      
+      // Record the purchase in your backend API
       const purchaseData = {
         listingId: selectedOffer.id,
         buyerPublicKey: publicKey,
-        quantity: Number(quantity),
-        totalAmount: Number(totalAmount)
+        quantity: quantity,
+        totalAmount: totalCost,
+        sellerWalletAddress: sellerWalletAddress,
+        transactionSignature: result.tx
       };
   
-      console.log('Sending purchase request:', purchaseData);
-  
-      const response = await fetch('/api/purchase', {
+      const apiResponse = await fetch('/api/purchase', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -147,29 +224,27 @@ export default function BuyerDashboard() {
         body: JSON.stringify(purchaseData),
       });
   
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Purchase failed');
+      if (!apiResponse.ok) {
+        const errorData = await apiResponse.json();
+        console.warn('Backend API reported an issue:', errorData);
+        // We don't throw here because the blockchain transaction already succeeded
       }
   
-      const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Purchase failed');
+      setPurchaseSuccess(true);
+      setTransactionSignature(result.tx || null);
+      setTransactionDetails(JSON.stringify(result.data || {}, null, 2));
+      
+      // Refresh listings and token balance after successful purchase
+      fetchListings();
+      if (publicKey) {
+        checkTokenBalance(publicKey);
       }
-  
-      alert('Purchase successful!');
-      setQuantity(0);
-      setSelectedOffer(null);
-      fetchListings(); // Refresh listings
     } catch (error) {
       console.error('Purchase failed:', error);
-      alert(error instanceof Error ? error.message : 'Energy purchase failed. Please try again.');
+      setError(error instanceof Error ? error.message : 'Energy purchase failed. Please try again.');
+    } finally {
+      setProcessingPurchase(false);
     }
-  };
-  // Format wallet address
-  const formatPublicKey = (key: string | null) => {
-    if (!key) return '';
-    return `${key.slice(0, 4)}...${key.slice(-4)}`;
   };
 
   // Calculate total cost
@@ -182,12 +257,18 @@ export default function BuyerDashboard() {
     return (subtotal - discount).toFixed(2);
   };
 
+  // Calculate network fee (0.5%)
+  const calculateNetworkFee = () => {
+    const total = parseFloat(calculateTotal());
+    return (total * 0.005).toFixed(2);
+  };
+
   // Filter listings based on search
   const filteredListings = listings.filter((listing) =>
     listing.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     listing.energyType.toLowerCase().includes(searchTerm.toLowerCase()) ||
     listing.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    listing.seller.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    (listing.seller?.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -203,25 +284,44 @@ export default function BuyerDashboard() {
               <span className="text-2xl font-bold text-white">EnergyPro</span>
             </Link>
 
-            <button
-              onClick={connectWallet}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
-                isWalletConnected
-                  ? 'bg-green-600/20 text-green-300 hover:bg-green-600/40'
-                  : 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/40'
-              }`}
-            >
-              <Wallet className="w-5 h-5" />
-              <span>
-                {isWalletConnected ? formatPublicKey(publicKey) : 'Connect Wallet'}
-              </span>
-            </button>
+            <div className="flex items-center space-x-4">
+              {buyerTokenBalance !== null && connected && (
+                <div className="bg-blue-900/50 px-4 py-2 rounded-lg">
+                  <span className="text-blue-300 text-sm mr-2">BIJLEE Balance:</span>
+                  <span className="text-white font-medium">{buyerTokenBalance.toFixed(2)}</span>
+                </div>
+              )}
+              
+              <button
+                onClick={connectWallet}
+                className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
+                  connected
+                    ? 'bg-green-600/20 text-green-300 hover:bg-green-600/40'
+                    : 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/40'
+                }`}
+              >
+                <Wallet className="w-5 h-5" />
+                <span>
+                  {connecting ? 'Connecting...' : connected ? formatPublicKey(publicKey) : 'Connect Wallet'}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       </nav>
 
       {/* Main Content */}
       <div className="pt-20 px-4 container mx-auto">
+        {/* Refresh Button */}
+        <div className="mb-4 flex justify-end">
+          <button
+            onClick={fetchListings}
+            className="bg-blue-600/50 text-white px-4 py-2 rounded-lg hover:bg-blue-600/70 transition-colors"
+          >
+            Refresh Listings
+          </button>
+        </div>
+
         {/* Search Bar */}
         <div className="mb-8">
           <div className="relative">
@@ -246,7 +346,7 @@ export default function BuyerDashboard() {
             <div className="col-span-full text-center text-red-500 py-12">{error}</div>
           ) : filteredListings.length === 0 ? (
             <div className="col-span-full text-center text-gray-400 py-12">
-              No listings found matching your search.
+              {searchTerm ? 'No listings found matching your search.' : 'No listings available at this time.'}
             </div>
           ) : (
             filteredListings.map((listing) => (
@@ -281,10 +381,20 @@ export default function BuyerDashboard() {
                       </span>
                     )}
                   </div>
+                  
+                  {/* Display seller wallet info */}
+                  {listing.sellerWalletAddress && (
+                    <div className="mt-1 text-xs text-gray-400 truncate">
+                      Seller: {listing.sellerWalletAddress.substring(0, 6)}...{listing.sellerWalletAddress.substring(listing.sellerWalletAddress.length - 4)}
+                    </div>
+                  )}
                 </div>
 
                 <button
-                  onClick={() => setSelectedOffer(listing)}
+                  onClick={() => {
+                    setSelectedOffer(listing);
+                    setQuantity(listing.minPurchase);
+                  }}
                   className="mt-4 w-full bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700 transition-colors"
                 >
                   Purchase
@@ -304,6 +414,9 @@ export default function BuyerDashboard() {
                   onClick={() => {
                     setSelectedOffer(null);
                     setQuantity(0);
+                    setPurchaseSuccess(false);
+                    setTransactionSignature(null);
+                    setError(null);
                   }}
                   className="text-gray-400 hover:text-white"
                 >
@@ -312,10 +425,57 @@ export default function BuyerDashboard() {
               </div>
 
               <div className="space-y-6">
+                {/* Success Message */}
+                {purchaseSuccess && (
+                  <div className="bg-green-500/10 border-l-4 border-green-500 text-green-300 p-4 mb-4">
+                    <p className="font-medium">Purchase successful!</p>
+                    {transactionSignature && (
+                      <div className="mt-2 text-sm">
+                        <p>Transaction: {formatPublicKey(transactionSignature)}</p>
+                        <a 
+                          href={`https://solscan.io/tx/${transactionSignature}?cluster=devnet`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:underline mt-1 inline-block"
+                        >
+                          View on Solscan
+                        </a>
+                      </div>
+                    )}
+                    
+                    {transactionDetails && (
+                      <div className="mt-2">
+                        <div className="flex items-center cursor-pointer" 
+                             onClick={() => setTransactionDetails(null)}>
+                          <p className="text-sm text-blue-300">Transaction Details</p>
+                          <ChevronDown className="h-4 w-4 ml-1 text-blue-300" />
+                        </div>
+                        <pre className="mt-2 text-xs overflow-auto max-h-32 bg-black/20 p-2 rounded">
+                          {transactionDetails}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Error Message */}
+                {error && (
+                  <div className="bg-red-500/10 border-l-4 border-red-500 text-red-300 p-4 mb-4">
+                    {error}
+                  </div>
+                )}
+
                 {/* Listing Details */}
                 <div>
                   <h3 className="text-lg font-semibold text-white">{selectedOffer.title}</h3>
-                  <p className="text-gray-400">{selectedOffer.seller.name || 'Anonymous Seller'}</p>
+                  <p className="text-gray-400">{selectedOffer.seller?.name || 'Anonymous Seller'}</p>
+                  
+                  {/* Display seller wallet address */}
+                  {selectedOffer.sellerWalletAddress && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Seller wallet: {selectedOffer.sellerWalletAddress.substring(0, 6)}...{selectedOffer.sellerWalletAddress.substring(selectedOffer.sellerWalletAddress.length - 4)}
+                    </p>
+                  )}
                 </div>
 
                 {/* Quantity Input */}
@@ -327,7 +487,7 @@ export default function BuyerDashboard() {
                     type="number"
                     value={quantity || ''}
                     onChange={(e) => {
-                      const value = parseInt(e.target.value) || 0;
+                      const value = parseFloat(e.target.value) || 0;
                       setQuantity(Math.max(
                         selectedOffer.minPurchase,
                         Math.min(selectedOffer.maxPurchase, value)
@@ -337,6 +497,7 @@ export default function BuyerDashboard() {
                     min={selectedOffer.minPurchase}
                     max={selectedOffer.maxPurchase}
                     required
+                    disabled={processingPurchase || purchaseSuccess}
                   />
                   <div className="mt-1 text-sm text-gray-400">
                     Min: {selectedOffer.minPurchase} kWh | Max: {selectedOffer.maxPurchase} kWh
@@ -370,34 +531,63 @@ export default function BuyerDashboard() {
                   )}
 
                   <div className="flex justify-between text-gray-300">
-                    <span>Network Fee</span>
-                    <span>₹0.50</span>
+                    <span>Network Fee (0.5%)</span>
+                    <span>₹{calculateNetworkFee()}</span>
                   </div>
 
                   <div className="flex justify-between text-lg font-bold text-white pt-2 border-t border-gray-700">
                     <span>Total</span>
-                    <span>₹{calculateTotal()}</span>
+                    <span>₹{(parseFloat(calculateTotal()) + parseFloat(calculateNetworkFee())).toFixed(2)}</span>
                   </div>
+
+                  {buyerTokenBalance !== null && (
+                    <div className="flex justify-between text-gray-300">
+                      <span>Your BIJLEE Balance</span>
+                      <span className={buyerTokenBalance < parseFloat(calculateTotal()) + parseFloat(calculateNetworkFee()) 
+                        ? "text-red-400" 
+                        : "text-green-400"
+                      }>
+                        {buyerTokenBalance.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Purchase Button */}
                 <button
                   onClick={handlePurchase}
-                  disabled={!isWalletConnected || quantity === 0}
-                  className="w-full bg-blue-600 text-white rounded-lg py-3 font-semibold 
+                  disabled={
+                    !connected ||
+                    !quantity || 
+                    processingPurchase || 
+                    purchaseSuccess || 
+                    (buyerTokenBalance !== null && buyerTokenBalance < parseFloat(calculateTotal()) + parseFloat(calculateNetworkFee()))
+                  }
+                  className={`w-full bg-blue-600 text-white rounded-lg py-3 font-semibold 
                            disabled:opacity-50 disabled:cursor-not-allowed 
-                           hover:bg-blue-700 transition-colors"
+                           hover:bg-blue-700 transition-colors`}
                 >
-                  {!isWalletConnected 
-                    ? 'Connect Wallet to Purchase' 
-                    : quantity === 0 
-                      ? 'Enter Quantity to Purchase' 
-                      : 'Confirm Purchase'}
+                  {processingPurchase ? (
+                    <div className="flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                      Processing...
+                    </div>
+                  ) : purchaseSuccess ? (
+                    'Purchase Complete'
+                  ) : !connected ? (
+                    'Connect Wallet to Purchase'
+                  ) : buyerTokenBalance !== null && buyerTokenBalance < parseFloat(calculateTotal()) + parseFloat(calculateNetworkFee()) ? (
+                    'Insufficient BIJLEE Balance'
+                  ) : quantity === 0 ? (
+                    'Enter Quantity to Purchase'
+                  ) : (
+                    'Confirm Purchase with Phantom'
+                  )}
                 </button>
 
-                {!isWalletConnected && (
+                {!connected && (
                   <p className="text-sm text-gray-400 text-center mt-2">
-                    Please connect your wallet to make a purchase
+                    Please connect your Phantom wallet to make a purchase
                   </p>
                 )}
               </div>
@@ -407,7 +597,7 @@ export default function BuyerDashboard() {
       </div>
 
       {/* Stats Overview */}
-      <div className="mt-8 container mx-auto px-4">
+      <div className="mt-8 container mx-auto px-4 pb-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-gray-800/50 rounded-xl p-6">
             <h3 className="text-gray-400 text-sm">Total Available Energy</h3>

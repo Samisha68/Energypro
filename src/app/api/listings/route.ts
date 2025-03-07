@@ -24,7 +24,8 @@ const ListingSchema = z.object({
   deliveryMethod: z.enum(['GRID', 'DIRECT', 'HYBRID']),
   sourceType: z.enum(['RESIDENTIAL', 'COMMERCIAL', 'INDUSTRIAL', 'UTILITY']),
   certification: z.string().optional().nullable(),
-  discount: z.number().min(0).max(100).optional().nullable()
+  discount: z.number().min(0).max(100).optional().nullable(),
+  sellerWalletAddress: z.string().min(32, "Valid wallet address required")
 });
 
 // Get current user from JWT
@@ -49,8 +50,22 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const sellerId = searchParams.get('sellerId');
 
+    // Handle the case where 'current' is passed to get the current user's listings
+    let actualSellerId = sellerId;
+    
+    if (sellerId === 'current') {
+      try {
+        actualSellerId = await getCurrentUserId();
+      } catch (error) {
+        return NextResponse.json(
+          { success: false, error: 'Authentication required to view your listings' },
+          { status: 401 }
+        );
+      }
+    }
+
     const listings = await prisma.energyListing.findMany({
-      where: sellerId ? { sellerId } : {},
+      where: actualSellerId ? { sellerId: actualSellerId } : {},
       include: {
         seller: {
           select: {
@@ -94,6 +109,7 @@ export async function POST(request: Request) {
         maxPurchase: Number(validatedData.maxPurchase),
         pricePerUnit: Number(validatedData.pricePerUnit),
         discount: validatedData.discount ? Number(validatedData.discount) : null,
+        sellerWalletAddress: validatedData.sellerWalletAddress,
         status: "ACTIVE",
         visibility: true,
         featured: false
@@ -165,25 +181,29 @@ export async function PUT(request: Request) {
       );
     }
 
+    // Validate the input
+    const validatedData = ListingSchema.parse(body);
+
     const listing = await prisma.energyListing.update({
       where: { id: body.id },
       data: {
-        title: body.title,
-        description: body.description,
-        energyType: body.energyType,
-        location: body.location,
-        state: body.state,
-        pincode: body.pincode,
-        address: body.address,
-        totalCapacity: Number(body.totalCapacity),
-        availableUnits: Number(body.availableUnits),
-        minPurchase: Number(body.minPurchase),
-        maxPurchase: Number(body.maxPurchase),
-        pricePerUnit: Number(body.pricePerUnit),
-        deliveryMethod: body.deliveryMethod,
-        sourceType: body.sourceType,
-        certification: body.certification,
-        discount: body.discount ? Number(body.discount) : null
+        title: validatedData.title,
+        description: validatedData.description,
+        energyType: validatedData.energyType,
+        location: validatedData.location,
+        state: validatedData.state,
+        pincode: validatedData.pincode,
+        address: validatedData.address,
+        totalCapacity: Number(validatedData.totalCapacity),
+        availableUnits: Number(validatedData.availableUnits),
+        minPurchase: Number(validatedData.minPurchase),
+        maxPurchase: Number(validatedData.maxPurchase),
+        pricePerUnit: Number(validatedData.pricePerUnit),
+        deliveryMethod: validatedData.deliveryMethod,
+        sourceType: validatedData.sourceType,
+        certification: validatedData.certification,
+        discount: validatedData.discount ? Number(validatedData.discount) : null,
+        sellerWalletAddress: validatedData.sellerWalletAddress
       },
       include: {
         seller: {
@@ -204,6 +224,14 @@ export async function PUT(request: Request) {
         success: false,
         error: 'Please sign in to update listing'
       }, { status: 401 });
+    }
+
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({
+        success: false,
+        error: 'Validation failed',
+        details: error.errors
+      }, { status: 400 });
     }
 
     return NextResponse.json({

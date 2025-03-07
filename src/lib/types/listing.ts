@@ -30,6 +30,7 @@ export enum ListingStatus {
 }
 
 export interface Listing {
+  sellerWalletAddress: string;
   id: string;
   sellerId: string;
   title: string;
