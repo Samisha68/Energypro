@@ -1,6 +1,6 @@
 // src/lib/bijlee-exchange.ts
-import { Connection, PublicKey, SystemProgram, Transaction, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
+import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import * as anchor from '@project-serum/anchor';
 import { Program, Idl } from '@project-serum/anchor';
 import { BN } from 'bn.js';
@@ -813,7 +813,7 @@ export async function createSellerTokenAccount(
     try {
       await connection.getTokenAccountBalance(sellerTokenAccount);
       return { success: true }; // Token account already exists
-    } catch (error) {
+    } catch {
       // Token account doesn't exist, proceed with creation
     }
 

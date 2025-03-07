@@ -108,9 +108,9 @@ export default function BuyerDashboard() {
       ));
       
       setError(null);
-    } catch (error) {
+    } catch {
       setError('Failed to load listings. Please try again later.');
-      console.error('Error:', error);
+      console.error('Error loading listings');
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +144,7 @@ export default function BuyerDashboard() {
     try {
       await connect();
     } catch {
-      console.error('Error connecting wallet:', error);
+      console.error('Error connecting wallet');
       alert('Failed to connect wallet. Please try again.');
     }
   };
