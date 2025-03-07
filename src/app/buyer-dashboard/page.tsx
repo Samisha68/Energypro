@@ -239,9 +239,8 @@ export default function BuyerDashboard() {
       if (publicKey) {
         checkTokenBalance(publicKey);
       }
-    } catch (error) {
-      console.error('Purchase failed:', error);
-      setError(error instanceof Error ? error.message : 'Energy purchase failed. Please try again.');
+    } catch {
+      setError('Failed to process purchase. Please try again.');
     } finally {
       setProcessingPurchase(false);
     }

@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet } from 'lucide-react';
 import Link from 'next/link';
-import { Listing, EnergyType, DeliveryMethod, SourceType, ListingStatus } from '@/lib/types/listing';
+import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/listing';
 import { useSolanaWallet, getSolanaConnection } from '@/lib/solana-wallet';
 import { createSellerTokenAccount } from '@/lib/bijlee-exchange';
 

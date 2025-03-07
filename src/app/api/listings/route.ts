@@ -81,12 +81,8 @@ export async function GET(request: Request) {
       success: true, 
       data: listings 
     });
-  } catch (error) {
-    console.error('GET Error:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch listings' },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ success: false, error: 'Failed to fetch listings' }, { status: 500 });
   }
 }
 
@@ -125,28 +121,8 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ success: true, data: listing });
-  } catch (error) {
-    console.error('POST Error:', error);
-    
-    if (error instanceof Error && error.message === 'Not authenticated') {
-      return NextResponse.json({
-        success: false,
-        error: 'Please sign in to create a listing'
-      }, { status: 401 });
-    }
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({
-        success: false,
-        error: 'Validation failed',
-        details: error.errors
-      }, { status: 400 });
-    }
-
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to create listing'
-    }, { status: 500 });
+  } catch {
+    return NextResponse.json({ success: false, error: 'Failed to create listing' }, { status: 500 });
   }
 }
 
@@ -216,28 +192,8 @@ export async function PUT(request: Request) {
     });
 
     return NextResponse.json({ success: true, data: listing });
-  } catch (error) {
-    console.error('PUT Error:', error);
-    
-    if (error instanceof Error && error.message === 'Not authenticated') {
-      return NextResponse.json({
-        success: false,
-        error: 'Please sign in to update listing'
-      }, { status: 401 });
-    }
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({
-        success: false,
-        error: 'Validation failed',
-        details: error.errors
-      }, { status: 400 });
-    }
-
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to update listing'
-    }, { status: 500 });
+  } catch {
+    return NextResponse.json({ success: false, error: 'Failed to update listing' }, { status: 500 });
   }
 }
 
@@ -281,19 +237,7 @@ export async function DELETE(request: Request) {
       success: true,
       message: 'Listing deleted successfully'
     });
-  } catch (error) {
-    console.error('DELETE Error:', error);
-    
-    if (error instanceof Error && error.message === 'Not authenticated') {
-      return NextResponse.json({
-        success: false,
-        error: 'Please sign in to delete listing'
-      }, { status: 401 });
-    }
-
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to delete listing'
-    }, { status: 500 });
+  } catch {
+    return NextResponse.json({ success: false, error: 'Failed to delete listing' }, { status: 500 });
   }
 }

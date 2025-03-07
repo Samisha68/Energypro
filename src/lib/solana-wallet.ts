@@ -124,9 +124,9 @@ export const useSolanaWallet = () => {
         }
       });
 
-    } catch (error) {
-      console.error('Error connecting wallet:', error);
-      throw error;
+    } catch {
+      console.error('Failed to connect wallet');
+      throw new Error('Failed to connect wallet');
     } finally {
       setConnecting(false);
     }
