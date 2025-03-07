@@ -541,8 +541,8 @@ export default function SellerDashboard() {
                       placeholder="Enter your Solana wallet address to receive payments"
                       required
                     />
-                    <p className="text-xs text-gray-400 mt-1">
-                      This address will be used by buyers to send BIJLEE token payments for your energy
+                    <p className="text-sm text-gray-400 text-center mt-2">
+                      Please connect your Phantom wallet to make a purchase
                     </p>
                   </div>
 
