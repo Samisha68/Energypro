@@ -625,7 +625,7 @@ export async function completeTransaction(
   wallet: WalletAdapter,
   connection: Connection,
   transactionAddress: string
-): Promise<ApiResponse<{}>> {
+): Promise<ApiResponse<object>> {
   try {
     if (!wallet || !wallet.publicKey) {
       throw new Error("Wallet not connected");
@@ -707,7 +707,7 @@ export async function cancelTransaction(
   wallet: WalletAdapter,
   connection: Connection,
   transactionAddress: string
-): Promise<ApiResponse<{}>> {
+): Promise<ApiResponse<object>> {
   try {
     if (!wallet || !wallet.publicKey) {
       throw new Error("Wallet not connected");
