@@ -65,16 +65,7 @@ export default function Header() {
               </ScrollLink>
             ))}
           </nav>
-          <div className="hidden md:flex items-center justify-end md:flex-1 lg:w-0">
-            <motion.a
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              href="#"
-              className="ml-8 whitespace-nowrap inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-blue-600 hover:bg-blue-700 transition-all"
-            >
-              Try Now
-            </motion.a>
-          </div>
+          
         </div>
       </div>
 
