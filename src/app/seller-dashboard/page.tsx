@@ -443,7 +443,7 @@ export default function SellerDashboard() {
             </div>
           ) : listings.length === 0 ? (
             <div className="col-span-full text-center py-12">
-              <p className="text-gray-400">No listings yet. Click "New Listing" to add your first listing.</p>
+              <p className="text-gray-400">No listings yet. Click &quot;New Listing&quot; to add your first listing.</p>
             </div>
           ) : (
             listings.map((listing) => (

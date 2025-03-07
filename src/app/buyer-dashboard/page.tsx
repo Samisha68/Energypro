@@ -109,8 +109,8 @@ export default function BuyerDashboard() {
       
       setError(null);
     } catch {
-      setError('Failed to load listings. Please try again later.');
-      console.error('Error loading listings');
+      console.error("Failed to load listings");
+      setError("Failed to load listings");
     } finally {
       setIsLoading(false);
     }
@@ -143,9 +143,10 @@ export default function BuyerDashboard() {
   const connectWallet = async () => {
     try {
       await connect();
+      return; // We'll exit and let the useEffect trigger a re-render
     } catch {
-      console.error('Error connecting wallet');
-      alert('Failed to connect wallet. Please try again.');
+      setError('Failed to connect wallet. Please try again.');
+      return;
     }
   };
 
@@ -155,7 +156,7 @@ export default function BuyerDashboard() {
       try {
         await connect();
         return; // We'll exit and let the useEffect trigger a re-render
-      } catch (error) {
+      } catch {
         setError('Failed to connect wallet. Please try again.');
         return;
       }
