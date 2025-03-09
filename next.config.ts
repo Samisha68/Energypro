@@ -3,17 +3,17 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /* config options here */
   typescript: {
-    // Ignore TypeScript errors in the smart_contract directory during build
+    // Ignore TypeScript errors during build
     ignoreBuildErrors: true,
   },
-  webpack: (config, { isServer }) => {
-    // Exclude smart_contract directory from the build
-    config.watchOptions = {
-      ...config.watchOptions,
-      ignored: config.watchOptions?.ignored 
-        ? [...(Array.isArray(config.watchOptions.ignored) ? config.watchOptions.ignored : [config.watchOptions.ignored]), '**/smart_contract/**']
-        : ['**/node_modules/**', '**/smart_contract/**'],
-    };
+  webpack: (config) => {
+    // Simple configuration without spread operators
+    if (!config.watchOptions) {
+      config.watchOptions = {};
+    }
+    
+    config.watchOptions.ignored = ['**/node_modules/**', '**/smart_contract/**'];
+    
     return config;
   },
 };
