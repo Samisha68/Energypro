@@ -190,6 +190,52 @@ const BIJLEE_IDL: Idl = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "processPurchase",
+      "accounts": [
+        {
+          "name": "buyer",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "listing",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "transaction",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "buyerTokenAccount",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "sellerTokenAccount",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "units",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -494,9 +540,17 @@ export async function processPurchase(
       throw new Error("Wallet not connected");
     }
 
-    console.log('Processing purchase for seller:', sellerPubkey);
-    console.log('Units to purchase:', units);
-    console.log('Price per unit (rupees):', pricePerUnit);
+    // Add validation for buyer/seller being the same
+    if (wallet.publicKey.toString() === sellerPubkey) {
+      throw new Error("Buyer and seller cannot be the same wallet for this transaction");
+    }
+
+    console.log('Transaction Details:');
+    console.log('- Buyer wallet:', wallet.publicKey.toString());
+    console.log('- Seller wallet:', sellerPubkey);
+    console.log('- Listing ID:', listingId);
+    console.log('- Units:', units);
+    console.log('- Price per unit:', pricePerUnit);
     
     // Validate seller public key
     let sellerPublicKey;
