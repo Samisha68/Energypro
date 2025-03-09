@@ -200,7 +200,7 @@ pub struct CancelTransaction<'info> {
     
     #[account(
         mut,
-        seeds = [b"transaction", transaction.transaction_id.as_bytes()],
+        seeds = [b"transaction", buyer.key().as_ref()],
         bump = transaction.bump,
         constraint = !transaction.is_completed @ BijleeError::AlreadyCompleted,
         constraint = !transaction.is_canceled @ BijleeError::AlreadyCanceled,
@@ -225,7 +225,9 @@ pub struct TransactionAccount {
     pub seller: Pubkey,
     pub amount: u64,
     pub units: u64,
+    pub transaction_id: String,
     pub is_completed: bool,
+    pub is_canceled: bool,
     pub bump: u8,
 }
 
@@ -235,7 +237,9 @@ impl TransactionAccount {
         32 + // seller pubkey
         8 +  // amount
         8 +  // units
+        40 + // transaction_id (String)
         1 +  // is_completed
+        1 +  // is_canceled
         1    // bump
     }
 }
