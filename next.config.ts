@@ -10,7 +10,9 @@ const nextConfig: NextConfig = {
     // Exclude smart_contract directory from the build
     config.watchOptions = {
       ...config.watchOptions,
-      ignored: [...(config.watchOptions?.ignored || []), '**/smart_contract/**'],
+      ignored: config.watchOptions?.ignored 
+        ? [...(Array.isArray(config.watchOptions.ignored) ? config.watchOptions.ignored : [config.watchOptions.ignored]), '**/smart_contract/**']
+        : ['**/node_modules/**', '**/smart_contract/**'],
     };
     return config;
   },
