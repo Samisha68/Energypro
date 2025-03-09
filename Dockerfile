@@ -26,11 +26,14 @@ COPY . .
 # Generate Prisma Client
 RUN npx prisma generate
 
-# Build the application
+# Build the application (without migrations during build)
 RUN npm run build
 
 # Expose the port the app runs on
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "start"] 
+# Create a startup script
+RUN echo '#!/bin/sh\nnpx prisma migrate deploy\nnpm start' > /app/start.sh && chmod +x /app/start.sh
+
+# Start the application with migrations
+CMD ["/app/start.sh"] 
