@@ -2,12 +2,13 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Wallet, Search, Package, MapPin, ChevronDown } from 'lucide-react';
+import { Wallet, Search, Package, MapPin, ChevronDown, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 import { PublicKey } from '@solana/web3.js';
 import { useSolanaWallet, formatPublicKey, getSolanaConnection } from '@/lib/solana-wallet';
-import { processPurchase } from '@/lib/bijlee-exchange'
+import { processPurchase, checkListingInitialized } from '@/lib/bijlee-exchange'
 import { getAssociatedTokenAddress } from '@solana/spl-token';
+import WalletSelector from '@/components/WalletSelector';
 
 // Constants
 const BIJLEE_TOKEN_MINT = new PublicKey("HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86");
@@ -54,9 +55,22 @@ export default function BuyerDashboard() {
   const [transactionSignature, setTransactionSignature] = useState<string | null>(null);
   const [buyerTokenBalance, setBuyerTokenBalance] = useState<number | null>(null);
   const [transactionDetails, setTransactionDetails] = useState<string | null>(null);
+  const [listingInitialized, setListingInitialized] = useState<boolean | null>(null);
+  const [checkingListing, setCheckingListing] = useState<boolean>(false);
 
   // Solana wallet integration
-  const { wallet, connected, connect, connecting, publicKey } = useSolanaWallet();
+  const { 
+    wallet, 
+    connected, 
+    connect, 
+    connecting, 
+    publicKey, 
+    availableWallets, 
+    showWalletSelector, 
+    setShowWalletSelector,
+    connectToWallet,
+    selectedWalletName
+  } = useSolanaWallet();
 
   // Fetch listings on component mount
   useEffect(() => {
@@ -139,31 +153,85 @@ export default function BuyerDashboard() {
     }
   };
 
-  // Connect Wallet
-  const connectWallet = async () => {
+  // Handle wallet connection
+  const handleWalletConnect = async () => {
     try {
+      setError(null);
       await connect();
-      return; // We'll exit and let the useEffect trigger a re-render
-    } catch {
+    } catch (error) {
       setError('Failed to connect wallet. Please try again.');
-      return;
+      console.error('Wallet connection error:', error);
     }
+  };
+
+  // Handle wallet selection
+  const handleWalletSelect = async (walletName: string) => {
+    try {
+      setError(null);
+      await connectToWallet(walletName);
+      
+      // Check token balance after connecting
+      if (publicKey) {
+        checkTokenBalance(publicKey);
+      }
+    } catch (error) {
+      setError('Failed to connect selected wallet. Please try again.');
+      console.error('Wallet selection error:', error);
+    }
+  };
+
+  // Check if listing is initialized on blockchain
+  const checkListingOnChain = async (listing: Listing) => {
+    if (!listing) return;
+    
+    setCheckingListing(true);
+    try {
+      const connection = getSolanaConnection();
+      const isInitialized = await checkListingInitialized(
+        connection,
+        listing.id,
+        listing.sellerWalletAddress
+      );
+      setListingInitialized(isInitialized);
+    } catch (error) {
+      console.error('Error checking listing initialization:', error);
+      setListingInitialized(false);
+    } finally {
+      setCheckingListing(false);
+    }
+  };
+
+  // Update the setSelectedOffer function to check initialization
+  const handleSelectOffer = (listing: Listing) => {
+    setSelectedOffer(listing);
+    setQuantity(listing.minPurchase);
+    // Check if the listing is initialized on the blockchain
+    checkListingOnChain(listing);
   };
 
   // Handle Purchase
   const handlePurchase = async () => {
     if (!connected || !wallet) {
-      try {
-        await connect();
-        return; // We'll exit and let the useEffect trigger a re-render
-      } catch {
-        setError('Failed to connect wallet. Please try again.');
-        return;
+      if (availableWallets.length > 1) {
+        setShowWalletSelector(true);
+      } else {
+        try {
+          await connect();
+        } catch {
+          setError('Failed to connect wallet. Please try again.');
+        }
       }
+      return;
     }
   
     if (!selectedOffer || !quantity) {
       alert('Please select quantity first');
+      return;
+    }
+    
+    // Check if the listing is initialized
+    if (listingInitialized === false) {
+      setError('This listing has not been initialized on the blockchain by the seller. Please contact the seller to initialize it.');
       return;
     }
     
@@ -271,6 +339,28 @@ export default function BuyerDashboard() {
     (listing.seller?.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Add this to your JSX where you show the purchase form
+  const renderInitializationWarning = () => {
+    if (listingInitialized === false) {
+      return (
+        <div className="bg-yellow-900/50 border border-yellow-600 rounded-lg p-4 mb-4">
+          <div className="flex items-start">
+            <AlertTriangle className="text-yellow-500 mr-3 mt-0.5" />
+            <div>
+              <h4 className="text-yellow-500 font-medium">Listing Not Initialized</h4>
+              <p className="text-yellow-300 text-sm mt-1">
+                This listing has not been initialized on the blockchain by the seller.
+                You cannot purchase from this listing until the seller initializes it.
+                Please contact the seller or try another listing.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-blue-900">
       {/* Navbar */}
@@ -292,19 +382,32 @@ export default function BuyerDashboard() {
                 </div>
               )}
               
-              <button
-                onClick={connectWallet}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
-                  connected
-                    ? 'bg-green-600/20 text-green-300 hover:bg-green-600/40'
-                    : 'bg-blue-600/20 text-blue-300 hover:bg-blue-600/40'
-                }`}
-              >
-                <Wallet className="w-5 h-5" />
-                <span>
-                  {connecting ? 'Connecting...' : connected ? formatPublicKey(publicKey) : 'Connect Wallet'}
-                </span>
-              </button>
+              <div className="flex items-center">
+                {connected ? (
+                  <div className="flex items-center">
+                    <span className="text-green-400 mr-2 flex items-center">
+                      <span className="w-2 h-2 bg-green-400 rounded-full mr-1"></span>
+                      {selectedWalletName || 'Connected'}:
+                    </span>
+                    <span className="text-white">{formatPublicKey(publicKey || '')}</span>
+                    <button
+                      onClick={() => setShowWalletSelector(true)}
+                      className="ml-2 text-blue-400 hover:text-blue-300 text-sm"
+                    >
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleWalletConnect}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition"
+                    disabled={connecting}
+                  >
+                    <Wallet size={16} />
+                    {connecting ? 'Connecting...' : 'Connect Wallet'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -392,8 +495,7 @@ export default function BuyerDashboard() {
 
                 <button
                   onClick={() => {
-                    setSelectedOffer(listing);
-                    setQuantity(listing.minPurchase);
+                    handleSelectOffer(listing);
                   }}
                   className="mt-4 w-full bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700 transition-colors"
                 >
@@ -553,6 +655,9 @@ export default function BuyerDashboard() {
                   )}
                 </div>
 
+                {/* Initialization Warning */}
+                {renderInitializationWarning()}
+
                 {/* Purchase Button */}
                 <button
                   onClick={handlePurchase}
@@ -621,6 +726,15 @@ export default function BuyerDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Wallet Selector Modal */}
+      {showWalletSelector && (
+        <WalletSelector 
+          wallets={availableWallets}
+          onSelect={handleWalletSelect}
+          onCancel={() => setShowWalletSelector(false)}
+        />
+      )}
     </div>
   );
 }

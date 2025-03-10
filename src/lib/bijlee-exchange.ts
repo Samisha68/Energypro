@@ -924,7 +924,7 @@ export async function initializeListingOnChain(
   listingId: string,
   pricePerUnit: number,
   availableUnits: number
-): Promise<ApiResponse<{ listingAccount: string }>> {
+): Promise<ApiResponse<{ listingAccount: string; sellerAddress: string }>> {
   try {
     if (!wallet || !wallet.publicKey) {
       throw new Error("Wallet not connected");
@@ -944,7 +944,7 @@ export async function initializeListingOnChain(
     );
     
     console.log('Initializing listing account:', listingAccount.toString());
-    console.log('Seller:', seller.toString());
+    console.log('Seller (connected wallet):', seller.toString());
     console.log('Listing ID:', listingId);
     console.log('Price per unit:', pricePerUnit);
     console.log('Available units:', availableUnits);
@@ -970,7 +970,10 @@ export async function initializeListingOnChain(
       
       return {
         success: true,
-        data: { listingAccount: listingAccount.toString() },
+        data: { 
+          listingAccount: listingAccount.toString(),
+          sellerAddress: seller.toString() // Return the seller address used
+        },
         tx
       };
     } catch (error) {
@@ -983,5 +986,41 @@ export async function initializeListingOnChain(
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error initializing listing'
     };
+  }
+}
+
+// Check if a listing is initialized on the blockchain
+export async function checkListingInitialized(
+  connection: Connection,
+  listingId: string,
+  sellerWalletAddress: string
+): Promise<boolean> {
+  try {
+    // Validate seller public key
+    let sellerPublicKey;
+    try {
+      sellerPublicKey = safePublicKey(sellerWalletAddress);
+    } catch (error) {
+      console.error('Invalid seller address:', error);
+      return false;
+    }
+    
+    // Calculate PDA for listing account
+    const programId = new PublicKey(BIJLEE_PROGRAM_ID);
+    const [listingAccount] = await PublicKey.findProgramAddress(
+      [
+        Buffer.from('listing'),
+        sellerPublicKey.toBuffer(),
+        Buffer.from(listingId),
+      ],
+      programId
+    );
+    
+    // Check if the account exists
+    const accountInfo = await connection.getAccountInfo(listingAccount);
+    return accountInfo !== null;
+  } catch (error) {
+    console.error('Error checking if listing is initialized:', error);
+    return false;
   }
 }

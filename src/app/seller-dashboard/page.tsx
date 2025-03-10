@@ -2,11 +2,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet } from 'lucide-react';
+import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet, AlertTriangle, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/listing';
-import { useSolanaWallet, getSolanaConnection } from '@/lib/solana-wallet';
-import { createSellerTokenAccount, initializeListingOnChain } from '@/lib/bijlee-exchange';
+import { useSolanaWallet, getSolanaConnection, formatPublicKey } from '@/lib/solana-wallet';
+import { createSellerTokenAccount, initializeListingOnChain, checkListingInitialized } from '@/lib/bijlee-exchange';
+import WalletSelector from '@/components/WalletSelector';
 
 interface ListingFormData {
   id?: string;
@@ -38,7 +39,19 @@ export default function SellerDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [processingAction, setProcessingAction] = useState<boolean>(false);
   const [creatingTokenAccount, setCreatingTokenAccount] = useState(false);
-  const { wallet, connected, connect, connecting } = useSolanaWallet();
+  const [initializedListings, setInitializedListings] = useState<Record<string, boolean>>({});
+  const [checkingInitialization, setCheckingInitialization] = useState<boolean>(false);
+  const { 
+    wallet, 
+    connected, 
+    connect, 
+    connecting, 
+    availableWallets, 
+    showWalletSelector, 
+    setShowWalletSelector,
+    connectToWallet,
+    selectedWalletName
+  } = useSolanaWallet();
   
   const initialFormState: ListingFormData = {
     title: '',
@@ -67,9 +80,17 @@ export default function SellerDashboard() {
   // Fetch listings on component mount
   useEffect(() => {
     fetchListings();
-  }, []);
+    
+    // Automatically set the wallet address when connected
+    if (connected && wallet && wallet.publicKey) {
+      setFormData(prev => ({
+        ...prev,
+        sellerWalletAddress: wallet.publicKey!.toString()
+      }));
+    }
+  }, [connected, wallet]);
 
-  // Fetch listings from your API
+  // Fetch listings and check initialization
   const fetchListings = async () => {
     try {
       setIsLoading(true);
@@ -84,6 +105,11 @@ export default function SellerDashboard() {
       const data = await response.json();
       if (data.success) {
         setListings(data.data);
+        
+        // Check which listings are initialized on the blockchain
+        if (data.data.length > 0 && connected) {
+          checkListingsInitialization(data.data);
+        }
       } else {
         throw new Error(data.error || 'Failed to fetch listings');
       }
@@ -94,6 +120,41 @@ export default function SellerDashboard() {
       setIsLoading(false);
     }
   };
+
+  // Check which listings are initialized on the blockchain
+  const checkListingsInitialization = async (listingsToCheck: Listing[]) => {
+    if (!connected || listingsToCheck.length === 0) return;
+    
+    setCheckingInitialization(true);
+    const connection = getSolanaConnection();
+    const initializedStatus: Record<string, boolean> = {};
+    
+    try {
+      // Check each listing in parallel
+      const checkPromises = listingsToCheck.map(async (listing) => {
+        const isInitialized = await checkListingInitialized(
+          connection,
+          listing.id,
+          listing.sellerWalletAddress
+        );
+        initializedStatus[listing.id] = isInitialized;
+      });
+      
+      await Promise.all(checkPromises);
+      setInitializedListings(initializedStatus);
+    } catch (error) {
+      console.error('Error checking listings initialization:', error);
+    } finally {
+      setCheckingInitialization(false);
+    }
+  };
+
+  // Re-check initialization when wallet connects
+  useEffect(() => {
+    if (connected && listings.length > 0) {
+      checkListingsInitialization(listings);
+    }
+  }, [connected]);
 
   // Handle input changes
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -317,6 +378,111 @@ export default function SellerDashboard() {
     }
   };
 
+  // Handle wallet selection
+  const handleWalletSelect = async (walletName: string) => {
+    try {
+      setError(null);
+      await connectToWallet(walletName);
+      
+      // Update the form with the connected wallet address
+      if (wallet && wallet.publicKey) {
+        setFormData(prev => ({
+          ...prev,
+          sellerWalletAddress: wallet.publicKey!.toString()
+        }));
+      }
+    } catch (error) {
+      setError('Failed to connect selected wallet. Please try again.');
+      console.error('Wallet selection error:', error);
+    }
+  };
+
+  // Add this function to the SellerDashboard component
+  const handleInitializeOnChain = async (listing: Listing) => {
+    if (!connected || !wallet) {
+      setError('Please connect your wallet first');
+      return;
+    }
+
+    setProcessingAction(true);
+    setError(null);
+
+    try {
+      const connection = getSolanaConnection();
+      const result = await initializeListingOnChain(
+        wallet,
+        connection,
+        listing.id,
+        listing.pricePerUnit,
+        listing.availableUnits
+      );
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to initialize listing on blockchain');
+      }
+
+      // Update the listing in the database with the correct seller wallet address
+      if (result.data && result.data.sellerAddress) {
+        const walletAddress = result.data.sellerAddress;
+        
+        // Only update if the address is different
+        if (walletAddress !== listing.sellerWalletAddress) {
+          const { id, ...listingWithoutId } = listing;
+          const updateResponse = await fetch('/api/listings', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              id: listing.id,
+              ...listingWithoutId,
+              sellerWalletAddress: walletAddress
+            }),
+          });
+          
+          if (!updateResponse.ok) {
+            console.warn('Failed to update listing wallet address in database, but blockchain initialization succeeded');
+          } else {
+            // Refresh listings to show the updated wallet address
+            fetchListings();
+          }
+        }
+      }
+
+      alert(`Listing "${listing.title}" successfully initialized on the blockchain!`);
+    } catch (error) {
+      console.error('Error initializing listing on blockchain:', error);
+      setError(error instanceof Error ? error.message : 'Failed to initialize listing on blockchain');
+    } finally {
+      setProcessingAction(false);
+    }
+  };
+
+  // Add this to your listing card JSX
+  const renderInitializationStatus = (listing: Listing) => {
+    const isInitialized = initializedListings[listing.id];
+    
+    if (isInitialized === undefined) {
+      return null; // Status unknown or still checking
+    }
+    
+    if (isInitialized) {
+      return (
+        <div className="flex items-center text-green-400 text-sm mt-2">
+          <CheckCircle size={16} className="mr-1" />
+          <span>Initialized on blockchain</span>
+        </div>
+      );
+    } else {
+      return (
+        <div className="flex items-center text-yellow-400 text-sm mt-2">
+          <AlertTriangle size={16} className="mr-1" />
+          <span>Not initialized on blockchain</span>
+        </div>
+      );
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-blue-900">
       {/* Navigation */}
@@ -505,6 +671,13 @@ export default function SellerDashboard() {
                     >
                       <Trash className="w-4 h-4" />
                     </button>
+                    <button
+                      onClick={() => handleInitializeOnChain(listing)}
+                      className="p-2 text-purple-400 hover:bg-purple-400/10 rounded"
+                      disabled={processingAction}
+                    >
+                      <BarChart4 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
 
@@ -536,6 +709,8 @@ export default function SellerDashboard() {
                     </div>
                   )}
                 </div>
+
+                {renderInitializationStatus(listing)}
               </div>
             ))
           )}
@@ -563,24 +738,56 @@ export default function SellerDashboard() {
 
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Seller Wallet Address - New Field */}
-                  <div className="col-span-2">
-                    <label className="block text-sm font-medium text-gray-300">
-                      Your Solana Wallet Address
+                  <div className="mb-4">
+                    <label className="block text-gray-300 mb-2">
+                      Seller Wallet Address
                       <span className="text-red-400 ml-1">*</span>
                     </label>
-                    <input
-                      type="text"
-                      name="sellerWalletAddress"
-                      value={formData.sellerWalletAddress}
-                      onChange={handleChange}
-                      className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
-                      placeholder="Enter your Solana wallet address to receive payments"
-                      required
-                    />
-                    <p className="text-sm text-gray-400 mt-2">
-                      Make sure to use the same wallet address that you&aposve connected with Phantom
-                    </p>
+                    {connected && wallet && wallet.publicKey ? (
+                      <div className="flex flex-col">
+                        <div className="flex items-center">
+                          <input
+                            type="text"
+                            name="sellerWalletAddress"
+                            value={wallet.publicKey.toString()}
+                            readOnly
+                            className="w-full bg-gray-700 text-gray-300 p-2 rounded border border-gray-600 cursor-not-allowed"
+                          />
+                          <span className="ml-2 text-green-400 flex items-center">
+                            <span className="w-2 h-2 bg-green-400 rounded-full mr-1"></span>
+                            {selectedWalletName || 'Connected'}
+                          </span>
+                        </div>
+                        <div className="flex mt-2 space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowWalletSelector(true)}
+                            className="bg-blue-600 text-white py-1 px-3 rounded hover:bg-blue-700 transition flex items-center justify-center gap-1"
+                          >
+                            <Wallet size={14} /> Change Wallet
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        <input
+                          type="text"
+                          name="sellerWalletAddress"
+                          value={formData.sellerWalletAddress}
+                          onChange={handleChange}
+                          placeholder="Enter your Solana wallet address"
+                          className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleWalletConnect}
+                          className="mt-2 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition flex items-center justify-center gap-2"
+                        >
+                          <Wallet size={16} /> Connect Wallet
+                        </button>
+                      </div>
+                    )}
+                    <p className="text-gray-400 text-sm mt-1">This wallet will receive payments for energy sold.</p>
                   </div>
 
                   <div className="col-span-2">
@@ -835,6 +1042,15 @@ export default function SellerDashboard() {
               </form>
             </div>
           </div>
+        )}
+
+        {/* Wallet Selector Modal */}
+        {showWalletSelector && (
+          <WalletSelector 
+            wallets={availableWallets}
+            onSelect={handleWalletSelect}
+            onCancel={() => setShowWalletSelector(false)}
+          />
         )}
       </div>
     </div>
