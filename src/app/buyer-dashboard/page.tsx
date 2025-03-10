@@ -341,6 +341,17 @@ export default function BuyerDashboard() {
 
   // Add this to your JSX where you show the purchase form
   const renderInitializationWarning = () => {
+    if (checkingListing) {
+      return (
+        <div className="bg-blue-900/50 border border-blue-600 rounded-lg p-4 mb-4">
+          <div className="flex items-center">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500 mr-3"></div>
+            <p className="text-blue-300 text-sm">Checking listing status...</p>
+          </div>
+        </div>
+      );
+    }
+    
     if (listingInitialized === false) {
       return (
         <div className="bg-yellow-900/50 border border-yellow-600 rounded-lg p-4 mb-4">
