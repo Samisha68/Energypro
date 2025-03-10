@@ -884,22 +884,35 @@ export async function createSellerTokenAccount(
       )
     );
 
-    // Get a recent blockhash
-    const { blockhash } = await connection.getLatestBlockhash();
+    // Get a recent blockhash with higher commitment level
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = wallet.publicKey;
 
     // Sign and send the transaction
     const signedTx = await wallet.signTransaction(transaction);
-    const signature = await connection.sendRawTransaction(signedTx.serialize());
-    await connection.confirmTransaction(signature);
+    const signature = await connection.sendRawTransaction(signedTx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed'
+    });
+    
+    // Use a more reliable confirmation strategy
+    const confirmation = await connection.confirmTransaction({
+      blockhash,
+      lastValidBlockHeight,
+      signature
+    }, 'confirmed');
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${confirmation.value.err.toString()}`);
+    }
 
     return { success: true };
   } catch (error) {
     console.error('Error creating seller token account:', error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to create token account'
+      error: error instanceof Error ? error.message : 'Unknown error creating token account'
     };
   }
 }

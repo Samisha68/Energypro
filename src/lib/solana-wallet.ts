@@ -22,7 +22,16 @@ export interface WalletProviderProps {
 // Default connection to Devnet
 export const getSolanaConnection = (): Connection => {
   const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || clusterApiUrl('devnet');
-  return new Connection(endpoint, 'confirmed');
+  
+  // Create connection with more reliable configuration
+  return new Connection(endpoint, {
+    commitment: 'confirmed',
+    confirmTransactionInitialTimeout: 60000, // 60 seconds
+    disableRetryOnRateLimit: false,
+    httpHeaders: {
+      'Content-Type': 'application/json'
+    }
+  });
 };
 
 // Hook to use wallet
