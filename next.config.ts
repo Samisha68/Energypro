@@ -7,12 +7,11 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   webpack: (config) => {
-    // Simple configuration without spread operators
-    if (!config.watchOptions) {
-      config.watchOptions = {};
-    }
-    
-    config.watchOptions.ignored = ['**/node_modules/**', '**/smart_contract/**'];
+    // Create a new watchOptions object instead of modifying the existing one
+    config.watchOptions = {
+      ...config.watchOptions,
+      ignored: ['**/node_modules/**', '**/smart_contract/**']
+    };
     
     return config;
   },
