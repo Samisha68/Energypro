@@ -576,7 +576,7 @@ export default function SellerDashboard() {
                       required
                     />
                     <p className="text-sm text-gray-400 mt-2">
-                      Make sure to use the same wallet address that you've connected with Phantom
+                      Make sure to use the same wallet address that you&aposve connected with Phantom
                     </p>
                   </div>
 
