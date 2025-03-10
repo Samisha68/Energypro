@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet, AlertTriangle, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/listing';
-import { useSolanaWallet, getSolanaConnection, formatPublicKey } from '@/lib/solana-wallet';
+import { useSolanaWallet, getSolanaConnection} from '@/lib/solana-wallet';
 import { createSellerTokenAccount, initializeListingOnChain, checkListingInitialized } from '@/lib/bijlee-exchange';
 import WalletSelector from '@/components/WalletSelector';
 
@@ -154,7 +154,7 @@ export default function SellerDashboard() {
     if (connected && listings.length > 0) {
       checkListingsInitialization(listings);
     }
-  }, [connected]);
+  }, [connected, listings, checkListingsInitialization]);
 
   // Handle input changes
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -427,14 +427,14 @@ export default function SellerDashboard() {
         
         // Only update if the address is different
         if (walletAddress !== listing.sellerWalletAddress) {
-          const { id, ...listingWithoutId } = listing;
+          const { id: listingId, ...listingWithoutId } = listing;
           const updateResponse = await fetch('/api/listings', {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              id: listing.id,
+              id: listingId,
               ...listingWithoutId,
               sellerWalletAddress: walletAddress
             }),
@@ -460,10 +460,19 @@ export default function SellerDashboard() {
 
   // Add this to your listing card JSX
   const renderInitializationStatus = (listing: Listing) => {
+    if (checkingInitialization) {
+      return (
+        <div className="flex items-center text-blue-400 text-sm mt-2">
+          <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-400 mr-1"></div>
+          <span>Checking status...</span>
+        </div>
+      );
+    }
+    
     const isInitialized = initializedListings[listing.id];
     
     if (isInitialized === undefined) {
-      return null; // Status unknown or still checking
+      return null; // Status unknown
     }
     
     if (isInitialized) {
