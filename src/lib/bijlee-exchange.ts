@@ -916,3 +916,72 @@ export async function createSellerTokenAccount(
     };
   }
 }
+
+// Initialize a listing on the Solana blockchain
+export async function initializeListingOnChain(
+  wallet: WalletAdapter,
+  connection: Connection,
+  listingId: string,
+  pricePerUnit: number,
+  availableUnits: number
+): Promise<ApiResponse<{ listingAccount: string }>> {
+  try {
+    if (!wallet || !wallet.publicKey) {
+      throw new Error("Wallet not connected");
+    }
+
+    const seller = wallet.publicKey;
+    const program = getProgram(connection, wallet);
+    
+    // Calculate PDA for listing account
+    const [listingAccount] = await PublicKey.findProgramAddress(
+      [
+        Buffer.from('listing'),
+        seller.toBuffer(),
+        Buffer.from(listingId),
+      ],
+      program.programId
+    );
+    
+    console.log('Initializing listing account:', listingAccount.toString());
+    console.log('Seller:', seller.toString());
+    console.log('Listing ID:', listingId);
+    console.log('Price per unit:', pricePerUnit);
+    console.log('Available units:', availableUnits);
+    
+    // Convert price to lamports (9 decimal places)
+    const price = new BN(pricePerUnit * 1_000_000_000);
+    
+    // Initialize the listing on-chain
+    try {
+      const tx = await program.methods
+        .initializeListing(
+          price,
+          new BN(availableUnits)
+        )
+        .accounts({
+          seller,
+          listing: listingAccount,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+      
+      console.log('Listing initialized on-chain. Transaction signature:', tx);
+      
+      return {
+        success: true,
+        data: { listingAccount: listingAccount.toString() },
+        tx
+      };
+    } catch (error) {
+      console.error('Error initializing listing on-chain:', error);
+      throw new Error('Failed to initialize listing on blockchain: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  } catch (error) {
+    console.error('Error in initializeListingOnChain:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error initializing listing'
+    };
+  }
+}

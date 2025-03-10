@@ -6,7 +6,7 @@ import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet } from 'lucide-re
 import Link from 'next/link';
 import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/listing';
 import { useSolanaWallet, getSolanaConnection } from '@/lib/solana-wallet';
-import { createSellerTokenAccount } from '@/lib/bijlee-exchange';
+import { createSellerTokenAccount, initializeListingOnChain } from '@/lib/bijlee-exchange';
 
 interface ListingFormData {
   id?: string;
@@ -117,36 +117,11 @@ export default function SellerDashboard() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validate form data
-    try {
-      // Check numeric fields
-      if (formData.totalCapacity <= 0) throw new Error('Total capacity must be greater than 0');
-      if (formData.availableUnits <= 0) throw new Error('Available units must be greater than 0');
-      if (formData.availableUnits > formData.totalCapacity) throw new Error('Available units cannot exceed total capacity');
-      if (formData.minPurchase <= 0) throw new Error('Minimum purchase must be greater than 0');
-      if (formData.maxPurchase <= formData.minPurchase) throw new Error('Maximum purchase must be greater than minimum purchase');
-      if (formData.maxPurchase > formData.availableUnits) throw new Error('Maximum purchase cannot exceed available units');
-      if (formData.pricePerUnit <= 0) throw new Error('Price per unit must be greater than 0');
-      
-      // Check required string fields
-      if (!formData.title.trim()) throw new Error('Title is required');
-      if (!formData.location.trim()) throw new Error('Location is required');
-      if (!formData.state.trim()) throw new Error('State is required');
-      if (!formData.address.trim()) throw new Error('Address is required');
-      
-      // Validate wallet address (simple validation)
-      if (!formData.sellerWalletAddress.trim()) throw new Error('Seller wallet address is required');
-      if (formData.sellerWalletAddress.length < 32) throw new Error('Please enter a valid Solana wallet address');
-    } catch (error) {
-      if (error instanceof Error) {
-        setError(error.message);
-      } else {
-        setError('Validation failed');
-      }
+    if (!connected) {
+      setError('Please connect your wallet first');
       return;
     }
     
-    setError(null);
     setProcessingAction(true);
     
     try {
@@ -170,6 +145,20 @@ export default function SellerDashboard() {
           const errorData = await backendResponse.json();
           throw new Error(errorData.error || 'Failed to update listing');
         }
+        
+        const updatedListing = await backendResponse.json();
+        
+        // Initialize or update the listing on the blockchain
+        if (wallet && connected) {
+          const connection = getSolanaConnection();
+          await initializeListingOnChain(
+            wallet,
+            connection,
+            updatedListing.data.id,
+            formData.pricePerUnit,
+            formData.availableUnits
+          );
+        }
       } else {
         // Create a new listing in your backend
         const backendResponse = await fetch('/api/listings', {
@@ -183,6 +172,20 @@ export default function SellerDashboard() {
         if (!backendResponse.ok) {
           const errorData = await backendResponse.json();
           throw new Error(errorData.error || 'Failed to create listing');
+        }
+        
+        const newListing = await backendResponse.json();
+        
+        // Initialize the listing on the blockchain
+        if (wallet && connected) {
+          const connection = getSolanaConnection();
+          await initializeListingOnChain(
+            wallet,
+            connection,
+            newListing.data.id,
+            formData.pricePerUnit,
+            formData.availableUnits
+          );
         }
       }
       
