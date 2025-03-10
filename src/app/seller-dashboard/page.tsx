@@ -332,7 +332,7 @@ export default function SellerDashboard() {
                 <button
                   onClick={handleWalletConnect}
                   disabled={connecting}
-                  className={`flex items-center space-x-2 px-4 py-2 bg-blue-600/20 text-blue-300 rounded-lg hover:bg-blue-600/40 transition-all duration-300 ${
+                  className={`flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-300 ${
                     connecting ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                 >
@@ -350,6 +350,11 @@ export default function SellerDashboard() {
                 </button>
               ) : (
                 <div className="flex items-center space-x-4">
+                  <div className="bg-green-600/20 text-green-300 px-4 py-2 rounded-lg flex items-center space-x-2">
+                    <Wallet className="w-5 h-5" />
+                    <span className="font-medium">Connected</span>
+                  </div>
+                  
                   <select
                     value={selectedListing?.id || ''}
                     onChange={(e) => {
@@ -412,6 +417,35 @@ export default function SellerDashboard() {
         {error && (
           <div className="bg-red-500/10 border-l-4 border-red-500 text-red-300 p-4 mb-6">
             {error}
+          </div>
+        )}
+        
+        {/* Wallet Connection Banner */}
+        {!connected && (
+          <div className="bg-blue-500/10 border-l-4 border-blue-500 text-blue-300 p-4 mb-6 flex justify-between items-center">
+            <div>
+              <p className="font-semibold text-lg">Connect Your Wallet</p>
+              <p className="text-sm">You need to connect your Phantom wallet to create and manage listings.</p>
+            </div>
+            <button
+              onClick={handleWalletConnect}
+              disabled={connecting}
+              className={`flex items-center space-x-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-300 ${
+                connecting ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+            >
+              {connecting ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  <span>Connecting...</span>
+                </>
+              ) : (
+                <>
+                  <Wallet className="w-5 h-5" />
+                  <span>Connect Wallet</span>
+                </>
+              )}
+            </button>
           </div>
         )}
 
@@ -541,8 +575,8 @@ export default function SellerDashboard() {
                       placeholder="Enter your Solana wallet address to receive payments"
                       required
                     />
-                    <p className="text-sm text-gray-400 text-center mt-2">
-                      Please connect your Phantom wallet to make a purchase
+                    <p className="text-sm text-gray-400 mt-2">
+                      Make sure to use the same wallet address that you've connected with Phantom
                     </p>
                   </div>
 
