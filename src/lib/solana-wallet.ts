@@ -43,108 +43,103 @@ export const useSolanaWallet = () => {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [selectedWalletName, setSelectedWalletName] = useState<string | null>(null);
   const [showWalletSelector, setShowWalletSelector] = useState<boolean>(false);
+  const [connectionAttempted, setConnectionAttempted] = useState<boolean>(false);
 
-  // Check for available wallet providers
-  const checkForWallets = () => {
-    const wallets: WalletProviderProps[] = [];
-    
-    // Debug what's available in window
-    console.log('Checking for wallets. Window objects:', {
-      phantom: !!(window as any)?.phantom?.solana,
-      solflare: !!(window as any)?.solflare,
-      backpack: !!(window as any)?.backpack?.solana,
-      slope: !!(window as any)?.slope,
-      coin98: !!(window as any)?.coin98,
-      glow: !!(window as any)?.glow,
-      solana: !!(window as any)?.solana
-    });
-    
-    // Check for Phantom wallet
-    if ((window as any)?.phantom?.solana) {
-      wallets.push({
-        provider: (window as any).phantom.solana,
-        name: 'Phantom',
-        icon: '/wallets/phantom.png'
-      });
-    }
-    
-    // Check for Solflare wallet
-    if ((window as any)?.solflare) {
-      wallets.push({
-        provider: (window as any).solflare,
-        name: 'Solflare',
-        icon: '/wallets/solflare.png'
-      });
-    }
-    
-    // Check for Backpack wallet
-    if ((window as any)?.backpack?.solana) {
-      wallets.push({
-        provider: (window as any).backpack.solana,
-        name: 'Backpack',
-        icon: '/wallets/backpack.png'
-      });
-    }
-    
-    // Check for Slope wallet
-    if ((window as any)?.slope) {
-      wallets.push({
-        provider: (window as any).slope,
-        name: 'Slope',
-        icon: '/wallets/slope.png'
-      });
-    }
-    
-    // Check for Coin98 wallet
-    if ((window as any)?.coin98) {
-      wallets.push({
-        provider: (window as any).coin98,
-        name: 'Coin98',
-        icon: '/wallets/coin98.png'
-      });
-    }
-    
-    // Check for Glow wallet
-    if ((window as any)?.glow) {
-      wallets.push({
-        provider: (window as any).glow,
-        name: 'Glow',
-        icon: '/wallets/glow.png'
-      });
-    }
-    
-    // Check for default Solana wallet (could be any of the above)
-    // Only add if it's not already included
-    if ((window as any)?.solana && !wallets.some(w => w.provider === (window as any).solana)) {
-      wallets.push({
-        provider: (window as any).solana,
-        name: 'Solana',
-        icon: '/wallets/solana.png'
-      });
-    }
-    
-    // Log available wallets for debugging
-    console.log('Available wallets:', wallets.map(w => w.name));
-    
-    setAvailableWallets(wallets);
-    return wallets;
-  };
-
-  // Initialize wallet detection
+  // Check for available wallet providers - only once on mount
   useEffect(() => {
+    const checkForWallets = () => {
+      const wallets: WalletProviderProps[] = [];
+      
+      // Debug what's available in window
+      console.log('Checking for wallets. Window objects:', {
+        phantom: !!(window as any)?.phantom?.solana,
+        solflare: !!(window as any)?.solflare,
+        backpack: !!(window as any)?.backpack?.solana,
+        slope: !!(window as any)?.slope,
+        coin98: !!(window as any)?.coin98,
+        glow: !!(window as any)?.glow,
+        solana: !!(window as any)?.solana
+      });
+      
+      // Check for Phantom wallet
+      if ((window as any)?.phantom?.solana) {
+        wallets.push({
+          provider: (window as any).phantom.solana,
+          name: 'Phantom',
+          icon: '/wallets/phantom.png'
+        });
+      }
+      
+      // Check for Solflare wallet
+      if ((window as any)?.solflare) {
+        wallets.push({
+          provider: (window as any).solflare,
+          name: 'Solflare',
+          icon: '/wallets/solflare.png'
+        });
+      }
+      
+      // Check for Backpack wallet
+      if ((window as any)?.backpack?.solana) {
+        wallets.push({
+          provider: (window as any).backpack.solana,
+          name: 'Backpack',
+          icon: '/wallets/backpack.png'
+        });
+      }
+      
+      // Check for Slope wallet
+      if ((window as any)?.slope) {
+        wallets.push({
+          provider: (window as any).slope,
+          name: 'Slope',
+          icon: '/wallets/slope.png'
+        });
+      }
+      
+      // Check for Coin98 wallet
+      if ((window as any)?.coin98) {
+        wallets.push({
+          provider: (window as any).coin98,
+          name: 'Coin98',
+          icon: '/wallets/coin98.png'
+        });
+      }
+      
+      // Check for Glow wallet
+      if ((window as any)?.glow) {
+        wallets.push({
+          provider: (window as any).glow,
+          name: 'Glow',
+          icon: '/wallets/glow.png'
+        });
+      }
+      
+      // Check for default Solana wallet (could be any of the above)
+      // Only add if it's not already included
+      if ((window as any)?.solana && !wallets.some(w => w.provider === (window as any).solana)) {
+        wallets.push({
+          provider: (window as any).solana,
+          name: 'Solana',
+          icon: '/wallets/solana.png'
+        });
+      }
+      
+      // Log available wallets for debugging
+      console.log('Available wallets:', wallets.map(w => w.name));
+      
+      setAvailableWallets(wallets);
+      return wallets;
+    };
+    
     // Check immediately
     checkForWallets();
     
     // Also check after window loads (some wallets might initialize later)
     window.addEventListener('load', checkForWallets);
     
-    // Check periodically for wallets that might be injected after page load
-    // But use a much longer interval to avoid rate limiting
-    const intervalId = setInterval(checkForWallets, 10000); // Check every 10 seconds instead of every second
-    
     return () => {
       window.removeEventListener('load', checkForWallets);
-      clearInterval(intervalId);
     };
   }, []);
 
@@ -189,7 +184,6 @@ export const useSolanaWallet = () => {
       // If no wallets are available, check again
       if (availableWallets.length === 0) {
         console.log('No wallets available, checking again...');
-        checkForWallets();
         
         // If still no wallets, show an error
         if (availableWallets.length === 0) {
@@ -205,6 +199,7 @@ export const useSolanaWallet = () => {
         return;
       }
       
+      setConnectionAttempted(true);
       setConnecting(true);
 
       let provider;
@@ -243,7 +238,7 @@ export const useSolanaWallet = () => {
           // If connecting with trusted fails, attempt normal connect
           console.log('Not a trusted app, trying normal connect:', 
             connectError instanceof Error ? connectError.message : 'Unknown error');
-          
+            
           // If we get a rate limit error, don't try again immediately
           if (connectError instanceof Error && 
               connectError.message.includes('rate limit')) {
@@ -284,30 +279,6 @@ export const useSolanaWallet = () => {
       }, 2000); // 2 second cooldown between connection attempts
     }
   };
-
-  // Check for previously connected wallet in localStorage
-  useEffect(() => {
-    // Only try to auto-connect if we have wallets available
-    if (availableWallets.length === 0) return;
-    
-    const savedWalletName = localStorage.getItem('selectedWallet');
-    if (savedWalletName) {
-      setSelectedWalletName(savedWalletName);
-      
-      // Try to auto-connect if we have a saved wallet, but only once
-      const savedWallet = availableWallets.find(w => w.name === savedWalletName);
-      if (savedWallet) {
-        // Use a timeout to avoid the React warning about state updates during render
-        // And add a longer delay to avoid rate limiting
-        setTimeout(() => {
-          connect(savedWallet.provider, true).catch(err => {
-            console.log('Auto-connect failed, will not retry:', err);
-            // Don't retry on failure to avoid rate limiting
-          });
-        }, 2000); // Wait 2 seconds before trying to connect
-      }
-    }
-  }, [availableWallets, connect]);
 
   // Disconnect wallet
   const disconnect = async () => {
