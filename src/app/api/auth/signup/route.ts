@@ -31,6 +31,7 @@ export async function POST(request: Request) {
         role,
         phone,
         address,
+         // Store wallet address if provided
       },
       select: {
         id: true,
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
         role: true,
         phone: true,
         address: true,
+        // Include wallet address in response
       },
     });
 

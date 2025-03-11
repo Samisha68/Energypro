@@ -43,7 +43,7 @@ export const useSolanaWallet = () => {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [selectedWalletName, setSelectedWalletName] = useState<string | null>(null);
   const [showWalletSelector, setShowWalletSelector] = useState<boolean>(false);
-  const [connectionAttempted, setConnectionAttempted] = useState<boolean>(false);
+  const [, setConnectionAttempted] = useState<boolean>(false);
 
   // Check for available wallet providers - only once on mount
   useEffect(() => {

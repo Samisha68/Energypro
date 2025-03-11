@@ -57,7 +57,7 @@ const WalletSelector: React.FC<WalletSelectorProps> = ({ wallets, onSelect, onCa
                   onError={(e) => {
                     // Fallback if image fails to load
                     const target = e.target as HTMLImageElement;
-                    target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjIgMTJDMjIgMTcuNTIyOCAxNy41MjI4IDIyIDEyIDIyQzYuNDc3MTUgMjIgMiAxNy41MjI4IDIgMTJDMiA2LjQ3NzE1IDYuNDc3MTUgMiAxMiAyQzE3LjUyMjggMiAyMiA2LjQ3NzE1IDIyIDEyWiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+PHBhdGggZD0iTTEyIDEyLjVDMTIuODI4NCAxMi41IDEzLjUgMTEuODI4NCAxMy41IDExQzEzLjUgMTAuMTcxNiAxMi44Mjg0IDkuNSAxMiA5LjVDMTEuMTcxNiA5LjUgMTAuNSAxMC4xNzE2IDEwLjUgMTFDMTAuNSAxMS44Mjg0IDExLjE3MTYgMTIuNSAxMiAxMi41WiIgZmlsbD0id2hpdGUiLz48cGF0aCBkPSJNMTkgMTFDMTkgMTUuNDE4MyAxNS40MTgzIDE5IDExIDE5QzYuNTgxNzIgMTkgMyAxNS40MTgzIDMgMTFDMyA2LjU4MTcyIDYuNTgxNzIgMyAxMSAzQzE1LjQxODMgMyAxOSA2LjU4MTcyIDE5IDExWiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+PC9zdmc+';
+                    target.src = '/wallets/generic-wallet.svg';
                   }}
                 />
               </div>
