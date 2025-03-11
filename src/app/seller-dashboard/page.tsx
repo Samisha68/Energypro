@@ -1,7 +1,7 @@
 // src/app/seller-dashboard/page.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet, AlertTriangle, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/listing';
@@ -49,8 +49,8 @@ export default function SellerDashboard() {
     availableWallets, 
     showWalletSelector, 
     setShowWalletSelector,
-    connectToWallet,
-    selectedWalletName
+    selectedWalletName,
+    connectToWallet
   } = useSolanaWallet();
   
   const initialFormState: ListingFormData = {
@@ -77,20 +77,7 @@ export default function SellerDashboard() {
   // Add new state for selected listing
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
-  // Fetch listings on component mount
-  useEffect(() => {
-    fetchListings();
-    
-    // Automatically set the wallet address when connected
-    if (connected && wallet && wallet.publicKey) {
-      setFormData(prev => ({
-        ...prev,
-        sellerWalletAddress: wallet.publicKey!.toString()
-      }));
-    }
-  }, [connected, wallet]);
-
-  // Fetch listings and check initialization
+  // Fetch listings from your API
   const fetchListings = async () => {
     try {
       setIsLoading(true);
@@ -121,8 +108,8 @@ export default function SellerDashboard() {
     }
   };
 
-  // Check which listings are initialized on the blockchain
-  const checkListingsInitialization = async (listingsToCheck: Listing[]) => {
+  // Wrap checkListingsInitialization in useCallback
+  const checkListingsInitialization = useCallback(async (listingsToCheck: Listing[]) => {
     if (!connected || listingsToCheck.length === 0) return;
     
     setCheckingInitialization(true);
@@ -147,7 +134,20 @@ export default function SellerDashboard() {
     } finally {
       setCheckingInitialization(false);
     }
-  };
+  }, [connected]);
+
+  // Load listings on component mount and when wallet connects
+  useEffect(() => {
+    fetchListings();
+    
+    // Automatically set the wallet address when connected
+    if (connected && wallet && wallet.publicKey) {
+      setFormData(prev => ({
+        ...prev,
+        sellerWalletAddress: wallet.publicKey!.toString()
+      }));
+    }
+  }, [connected, wallet, fetchListings]);
 
   // Re-check initialization when wallet connects
   useEffect(() => {
