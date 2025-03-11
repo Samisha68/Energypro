@@ -139,7 +139,8 @@ export const useSolanaWallet = () => {
     window.addEventListener('load', checkForWallets);
     
     // Check periodically for wallets that might be injected after page load
-    const intervalId = setInterval(checkForWallets, 1000);
+    // But use a much longer interval to avoid rate limiting
+    const intervalId = setInterval(checkForWallets, 10000); // Check every 10 seconds instead of every second
     
     return () => {
       window.removeEventListener('load', checkForWallets);
@@ -172,7 +173,7 @@ export const useSolanaWallet = () => {
     });
   };
 
-  // Connect wallet
+  // Connect wallet - add rate limiting protection
   const connect = async (walletProvider?: any, isAutoConnect: boolean = false) => {
     try {
       // Debug available wallets
@@ -196,6 +197,12 @@ export const useSolanaWallet = () => {
           alert('No Solana wallets detected. Please install a wallet like Phantom, Solflare, or Backpack.');
           throw new Error('No wallet providers found');
         }
+      }
+      
+      // Prevent multiple connection attempts in quick succession
+      if (connecting) {
+        console.log('Already attempting to connect, please wait...');
+        return;
       }
       
       setConnecting(true);
@@ -236,6 +243,12 @@ export const useSolanaWallet = () => {
           // If connecting with trusted fails, attempt normal connect
           console.log('Not a trusted app, trying normal connect:', 
             connectError instanceof Error ? connectError.message : 'Unknown error');
+          
+          // If we get a rate limit error, don't try again immediately
+          if (connectError instanceof Error && 
+              connectError.message.includes('rate limit')) {
+            throw new Error('Wallet connection rate limited. Please try again in a few seconds.');
+          }
         }
       }
 
@@ -250,26 +263,48 @@ export const useSolanaWallet = () => {
 
     } catch (error) {
       console.error('Failed to connect wallet', error);
+      
+      // Show a user-friendly error message
+      if (error instanceof Error) {
+        if (error.message.includes('rate limit')) {
+          alert('Wallet connection is being rate limited. Please wait a few seconds before trying again.');
+        } else {
+          alert(`Failed to connect wallet: ${error.message}`);
+        }
+      } else {
+        alert('Failed to connect wallet. Please try again later.');
+      }
+      
       throw new Error(error instanceof Error ? error.message : 'Failed to connect wallet');
     } finally {
-      setConnecting(false);
-      setShowWalletSelector(false);
+      // Add a delay before allowing another connection attempt
+      setTimeout(() => {
+        setConnecting(false);
+        setShowWalletSelector(false);
+      }, 2000); // 2 second cooldown between connection attempts
     }
   };
 
   // Check for previously connected wallet in localStorage
   useEffect(() => {
+    // Only try to auto-connect if we have wallets available
+    if (availableWallets.length === 0) return;
+    
     const savedWalletName = localStorage.getItem('selectedWallet');
     if (savedWalletName) {
       setSelectedWalletName(savedWalletName);
       
-      // Try to auto-connect if we have a saved wallet
+      // Try to auto-connect if we have a saved wallet, but only once
       const savedWallet = availableWallets.find(w => w.name === savedWalletName);
       if (savedWallet) {
         // Use a timeout to avoid the React warning about state updates during render
+        // And add a longer delay to avoid rate limiting
         setTimeout(() => {
-          connect(savedWallet.provider, true).catch(console.error);
-        }, 0);
+          connect(savedWallet.provider, true).catch(err => {
+            console.log('Auto-connect failed, will not retry:', err);
+            // Don't retry on failure to avoid rate limiting
+          });
+        }, 2000); // Wait 2 seconds before trying to connect
       }
     }
   }, [availableWallets, connect]);
