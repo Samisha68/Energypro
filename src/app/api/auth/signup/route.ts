@@ -5,14 +5,27 @@ import { hashPassword } from '@/lib/auth';
 
 export async function POST(request: Request) {
   try {
+    console.log('Starting signup process...');
+    
     const { email, password, name, role, phone, address } = await request.json();
+    
+    console.log('Received signup data:', { 
+      email, 
+      hasPassword: !!password, 
+      name, 
+      role, 
+      hasPhone: !!phone, 
+      hasAddress: !!address
+    });
 
     // Check if user exists
+    console.log('Checking if user exists:', email);
     const existingUser = await prisma.user.findUnique({
       where: { email }
     });
 
     if (existingUser) {
+      console.log('User already exists:', email);
       return NextResponse.json(
         { error: 'Email already registered' },
         { status: 400 }
@@ -20,18 +33,19 @@ export async function POST(request: Request) {
     }
 
     // Hash password
+    console.log('Hashing password...');
     const hashedPassword = await hashPassword(password);
 
     // Create user
+    console.log('Creating user in database...');
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         name,
         role,
-        phone,
-        address,
-         // Store wallet address if provided
+        phone: phone || null,
+        address: address || null,
       },
       select: {
         id: true,
@@ -40,10 +54,10 @@ export async function POST(request: Request) {
         role: true,
         phone: true,
         address: true,
-        // Include wallet address in response
       },
     });
 
+    console.log('User created successfully:', user.id);
     return NextResponse.json(
       { 
         message: 'User created successfully',
@@ -54,6 +68,14 @@ export async function POST(request: Request) {
 
   } catch (error) {
     console.error('Signup error:', error);
+    // Log detailed error information
+    if (error instanceof Error) {
+      console.error({
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+    }
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

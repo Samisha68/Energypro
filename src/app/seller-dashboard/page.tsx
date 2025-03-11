@@ -8,6 +8,7 @@ import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/lis
 import { useSolanaWallet, getSolanaConnection} from '@/lib/solana-wallet';
 import { createSellerTokenAccount, initializeListingOnChain, checkListingInitialized } from '@/lib/bijlee-exchange';
 import WalletSelector from '@/components/WalletSelector';
+import dynamic from 'next/dynamic';
 
 interface ListingFormData {
   id?: string;
@@ -30,7 +31,19 @@ interface ListingFormData {
   sellerWalletAddress: string;
 }
 
+// Create a dynamic component with SSR disabled
+const SellerDashboardComponent = dynamic(
+  () => Promise.resolve(SellerDashboardContent),
+  { ssr: false }
+);
+
+// Export the dynamic component as the default
 export default function SellerDashboard() {
+  return <SellerDashboardComponent />;
+}
+
+// Move the actual component content to a separate function
+function SellerDashboardContent() {
   // State Management
   const [listings, setListings] = useState<Listing[]>([]);
   const [isAddingListing, setIsAddingListing] = useState(false);
@@ -40,7 +53,8 @@ export default function SellerDashboard() {
   const [processingAction, setProcessingAction] = useState<boolean>(false);
   const [creatingTokenAccount, setCreatingTokenAccount] = useState(false);
   const [initializedListings, setInitializedListings] = useState<Record<string, boolean>>({});
-  const [checkingInitialization, setCheckingInitialization] = useState<boolean>(false);
+  const [checkingInitialization] = useState<boolean>(false);
+  const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const { 
     wallet, 
     connected, 
@@ -74,11 +88,37 @@ export default function SellerDashboard() {
   };
   const [formData, setFormData] = useState<ListingFormData>(initialFormState);
 
-  // Add new state for selected listing
-  const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
+  // Wrap checkListingsInitialization in useCallback
+  const checkListingsInitialization = useCallback(async (listings: Listing[]) => {
+    // Add null check for wallet
+    if (!connected || !wallet || !wallet.publicKey) return;
+    
+    try {
+      const initializedStatus: Record<string, boolean> = {};
+      
+      for (const listing of listings) {
+        try {
+          const result = await checkListingInitialized(
+            getSolanaConnection(),
+            listing.id,
+            listing.sellerWalletAddress
+          );
+          // Since checkListingInitialized returns a boolean, just use it directly
+          initializedStatus[listing.id] = result;
+        } catch (error) {
+          console.error(`Error checking listing ${listing.id}:`, error);
+          initializedStatus[listing.id] = false;
+        }
+      }
+      
+      setInitializedListings(initializedStatus);
+    } catch (error) {
+      console.error('Error checking listings initialization:', error);
+    }
+  }, [connected, wallet]);
 
-  // Fetch listings from your API
-  const fetchListings = async () => {
+  // Fetch listings from your API - wrap in useCallback
+  const fetchListings = useCallback(async () => {
     try {
       setIsLoading(true);
       // Important: Change the parameter to match your backend
@@ -106,35 +146,7 @@ export default function SellerDashboard() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Wrap checkListingsInitialization in useCallback
-  const checkListingsInitialization = useCallback(async (listingsToCheck: Listing[]) => {
-    if (!connected || listingsToCheck.length === 0) return;
-    
-    setCheckingInitialization(true);
-    const connection = getSolanaConnection();
-    const initializedStatus: Record<string, boolean> = {};
-    
-    try {
-      // Check each listing in parallel
-      const checkPromises = listingsToCheck.map(async (listing) => {
-        const isInitialized = await checkListingInitialized(
-          connection,
-          listing.id,
-          listing.sellerWalletAddress
-        );
-        initializedStatus[listing.id] = isInitialized;
-      });
-      
-      await Promise.all(checkPromises);
-      setInitializedListings(initializedStatus);
-    } catch (error) {
-      console.error('Error checking listings initialization:', error);
-    } finally {
-      setCheckingInitialization(false);
-    }
-  }, [connected]);
+  }, [connected, checkListingsInitialization]);
 
   // Load listings on component mount and when wallet connects
   useEffect(() => {

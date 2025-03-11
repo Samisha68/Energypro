@@ -15,7 +15,7 @@ interface FormData {
   role: 'BUYER' | 'SELLER';
   phone: string;
   address: string;
-  walletAddress?: string; // Add wallet address to form data
+  walletAddress?: string; // Optional, not sent to API
 }
 
 function Loading() {
@@ -107,7 +107,7 @@ function SignUpContent() {
     e.preventDefault();
     setError('');
     
-    // Validate wallet address for sellers
+    // Validate wallet address for sellers (UI validation only)
     if (formData.role === 'SELLER' && (!formData.walletAddress || formData.walletAddress.trim() === '')) {
       setError('Please connect your wallet to continue.');
       return;
@@ -117,11 +117,14 @@ function SignUpContent() {
     setStep('signup');
 
     try {
+      // Create a copy of formData without the walletAddress field
+      const { ...signupData } = formData;
+      
       // First register the user
       const signupRes = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(signupData)
       });
 
       if (!signupRes.ok) {

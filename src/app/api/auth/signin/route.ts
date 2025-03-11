@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyPassword } from '@/lib/auth';
 import jwt from 'jsonwebtoken';
-import { cookies } from 'next/headers';
+
 
 export async function POST(request: Request) {
   try {
@@ -36,6 +36,9 @@ export async function POST(request: Request) {
     console.log('Looking up user:', email);
     const user = await prisma.user.findUnique({
       where: { email }
+    }).catch(err => {
+      console.error('Database error when finding user:', err);
+      return null;
     });
 
     if (!user) {
@@ -48,29 +51,46 @@ export async function POST(request: Request) {
 
     console.log('User found, verifying password...');
     // Verify password
-    const isValidPassword = await verifyPassword(password, user.password);
-    if (!isValidPassword) {
-      console.log('Invalid password for user:', email);
+    try {
+      const isValidPassword = await verifyPassword(password, user.password);
+      if (!isValidPassword) {
+        console.log('Invalid password for user:', email);
+        return NextResponse.json(
+          { error: 'Invalid credentials' },
+          { status: 401 }
+        );
+      }
+    } catch (passwordError) {
+      console.error('Error verifying password:', passwordError);
       return NextResponse.json(
-        { error: 'Invalid credentials' },
-        { status: 401 }
+        { error: 'Authentication error' },
+        { status: 500 }
       );
     }
 
     console.log('Password verified, generating token...');
     // Generate JWT token
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        role: user.role
-      },
-      process.env.JWT_SECRET!,
-      { expiresIn: '24h' }
-    );
+    let token;
+    try {
+      token = jwt.sign(
+        {
+          userId: user.id,
+          email: user.email,
+          role: user.role
+        },
+        process.env.JWT_SECRET!,
+        { expiresIn: '24h' }
+      );
+    } catch (tokenError) {
+      console.error('Error generating token:', tokenError);
+      return NextResponse.json(
+        { error: 'Authentication error' },
+        { status: 500 }
+      );
+    }
 
     console.log('Token generated, creating response...');
-    // Create response
+    // Create response with the token in the body
     const response = NextResponse.json({
       user: {
         id: user.id,
@@ -83,13 +103,18 @@ export async function POST(request: Request) {
 
     console.log('Setting cookie...');
     // Set token in HTTP-only cookie
-    const cookieStore = await cookies();
-    cookieStore.set('auth-token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 // 24 hours
-    });
+    try {
+      // Set the cookie in the response headers
+      response.cookies.set('auth-token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 // 24 hours
+      });
+    } catch (cookieError) {
+      console.error('Error setting cookie:', cookieError);
+      // Continue anyway, as the token is still in the response body
+    }
 
     console.log('Signin successful');
     return response;
