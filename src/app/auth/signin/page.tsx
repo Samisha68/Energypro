@@ -34,12 +34,23 @@ export default function SigninPage() {
         body: JSON.stringify(formData)
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Invalid credentials');
+        // Handle specific error cases
+        if (res.status === 401) {
+          throw new Error('Invalid email or password');
+        } else if (res.status === 500) {
+          console.error('Server error details:', data);
+          throw new Error('An error occurred while signing in. Please try again later.');
+        } else {
+          throw new Error(data.error || 'Failed to sign in');
+        }
       }
 
-      const data = await res.json();
+      if (!data.success || !data.user) {
+        throw new Error('Invalid response from server');
+      }
       
       // Redirect based on user role
       if (data.user.role === 'BUYER') {
@@ -48,7 +59,8 @@ export default function SigninPage() {
         router.push('/seller-dashboard');
       }
     } catch (err: any) {
-      setError(err.message);
+      console.error('Sign-in error:', err);
+      setError(err.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }

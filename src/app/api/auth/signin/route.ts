@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyPassword } from '@/lib/auth';
 import jwt from 'jsonwebtoken';
-
+import { Prisma } from '@prisma/client';
 
 export async function POST(request: Request) {
   try {
@@ -32,14 +32,24 @@ export async function POST(request: Request) {
       );
     }
 
-    // Find user
+    // Find user with error handling for database issues
     console.log('Looking up user:', email);
-    const user = await prisma.user.findUnique({
-      where: { email }
-    }).catch(err => {
-      console.error('Database error when finding user:', err);
-      return null;
-    });
+    let user;
+    try {
+      user = await prisma.user.findUnique({
+        where: { email }
+      });
+    } catch (dbError) {
+      console.error('Database error when finding user:', dbError);
+      if (dbError instanceof Prisma.PrismaClientKnownRequestError) {
+        console.error('Prisma error code:', dbError.code);
+        return NextResponse.json(
+          { error: 'Database error', code: dbError.code },
+          { status: 500 }
+        );
+      }
+      throw dbError;
+    }
 
     if (!user) {
       console.log('User not found:', email);
@@ -78,7 +88,7 @@ export async function POST(request: Request) {
           email: user.email,
           role: user.role
         },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET,
         { expiresIn: '24h' }
       );
     } catch (tokenError) {
@@ -92,6 +102,7 @@ export async function POST(request: Request) {
     console.log('Token generated, creating response...');
     // Create response with the token in the body
     const response = NextResponse.json({
+      success: true,
       user: {
         id: user.id,
         email: user.email,
@@ -130,7 +141,7 @@ export async function POST(request: Request) {
       });
     }
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
