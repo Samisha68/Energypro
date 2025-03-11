@@ -17,6 +17,7 @@ model User {
   role          UserRole        @default(BUYER)
   phone         String?
   address       String?
+  walletAddress String?         // Solana wallet address
   listings      EnergyListing[]
   transactions  Transaction[]
   createdAt     DateTime        @default(now())

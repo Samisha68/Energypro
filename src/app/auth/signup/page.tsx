@@ -4,7 +4,9 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Wallet } from 'lucide-react';
+import { useSolanaWallet } from '@/lib/solana-wallet';
+import WalletSelector from '@/components/WalletSelector';
 
 interface FormData {
   email: string;
@@ -13,6 +15,7 @@ interface FormData {
   role: 'BUYER' | 'SELLER';
   phone: string;
   address: string;
+  walletAddress?: string; // Add wallet address to form data
 }
 
 function Loading() {
@@ -28,6 +31,20 @@ function SignUpContent() {
   const searchParams = useSearchParams();
   const role = searchParams.get('role');
 
+  // Solana wallet integration
+  const { 
+    wallet, 
+    connected, 
+    connect, 
+    
+     
+    availableWallets, 
+    showWalletSelector, 
+    setShowWalletSelector,
+    connectToWallet,
+    selectedWalletName
+  } = useSolanaWallet();
+
   useEffect(() => {
     if (!role || !['BUYER', 'SELLER'].includes(role)) {
       router.push('/role-selection');
@@ -40,11 +57,22 @@ function SignUpContent() {
     name: '',
     role: (role as 'BUYER' | 'SELLER') || 'BUYER',
     phone: '',
-    address: ''
+    address: '',
+    walletAddress: ''
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<'signup' | 'signin' | 'redirect'>('signup');
+
+  // Update form data when wallet is connected
+  useEffect(() => {
+    if (connected && wallet && wallet.publicKey) {
+      setFormData(prev => ({
+        ...prev,
+        walletAddress: wallet.publicKey!.toString()
+      }));
+    }
+  }, [connected, wallet]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({
@@ -53,9 +81,38 @@ function SignUpContent() {
     });
   };
 
+  // Handle wallet connection
+  const handleWalletConnect = async () => {
+    try {
+      setError('');
+      await connect();
+    } catch (error) {
+      setError('Failed to connect wallet. Please try again.');
+      console.error('Wallet connection error:', error);
+    }
+  };
+
+  // Handle wallet selection
+  const handleWalletSelect = async (walletName: string) => {
+    try {
+      setError('');
+      await connectToWallet(walletName);
+    } catch (error) {
+      setError('Failed to connect selected wallet. Please try again.');
+      console.error('Wallet selection error:', error);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
+    
+    // Validate wallet address for sellers
+    if (formData.role === 'SELLER' && (!formData.walletAddress || formData.walletAddress.trim() === '')) {
+      setError('Please connect your wallet to continue.');
+      return;
+    }
+    
     setLoading(true);
     setStep('signup');
 
@@ -118,8 +175,71 @@ function SignUpContent() {
     }
   };
 
+  // Add wallet connection section to the form
+  const renderWalletSection = () => {
+    if (formData.role !== 'SELLER') return null;
+    
+    return (
+      <div className="mb-6">
+        <label className="block text-gray-300 mb-2">
+          Wallet Connection
+          <span className="text-red-400 ml-1">*</span>
+        </label>
+        {connected && wallet && wallet.publicKey ? (
+          <div className="flex flex-col">
+            <div className="flex items-center">
+              <input
+                type="text"
+                name="walletAddress"
+                value={wallet.publicKey.toString()}
+                readOnly
+                className="w-full bg-gray-700 text-gray-300 p-2 rounded border border-gray-600 cursor-not-allowed"
+              />
+              <span className="ml-2 text-green-400 flex items-center">
+                <span className="w-2 h-2 bg-green-400 rounded-full mr-1"></span>
+                {selectedWalletName || 'Connected'}
+              </span>
+            </div>
+            <div className="flex mt-2 space-x-2">
+              <button
+                type="button"
+                onClick={() => setShowWalletSelector(true)}
+                className="bg-blue-600 text-white py-1 px-3 rounded hover:bg-blue-700 transition flex items-center justify-center gap-1"
+              >
+                <Wallet size={14} /> Change Wallet
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col">
+            <input
+              type="text"
+              name="walletAddress"
+              value={formData.walletAddress}
+              onChange={handleChange}
+              placeholder="Connect your wallet to auto-fill"
+              className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600"
+            />
+            <button
+              type="button"
+              onClick={handleWalletConnect}
+              className="mt-2 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition flex items-center justify-center gap-2"
+            >
+              <Wallet size={16} /> Connect Wallet
+            </button>
+          </div>
+        )}
+        <p className="text-gray-400 text-sm mt-1">
+          {formData.role === 'SELLER' 
+            ? 'This wallet will receive payments for energy sold.' 
+            : 'This wallet will be used for energy purchases.'}
+        </p>
+      </div>
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-blue-900">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-black via-gray-900 to-blue-900">
       {/* Nav */}
       <nav className="fixed top-0 left-0 w-full bg-black/60 backdrop-blur-md shadow-lg z-50">
         <div className="container mx-auto flex items-center justify-between px-4 py-4 md:px-6">
@@ -233,6 +353,8 @@ function SignUpContent() {
               />
             </div>
 
+            {renderWalletSection()}
+
             <button
               type="submit"
               disabled={loading}
@@ -262,6 +384,15 @@ function SignUpContent() {
           </p>
         </div>
       </div>
+
+      {/* Wallet Selector Modal */}
+      {showWalletSelector && (
+        <WalletSelector 
+          wallets={availableWallets}
+          onSelect={handleWalletSelect}
+          onCancel={() => setShowWalletSelector(false)}
+        />
+      )}
     </div>
   );
 }
