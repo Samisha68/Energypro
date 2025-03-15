@@ -13,27 +13,20 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files first (better layer caching)
 COPY package*.json ./
-COPY prisma ./prisma/
 
 # Install dependencies
 RUN npm install
 
-# Copy the rest of the application
+# Copy application files
 COPY . .
 
-# Generate Prisma Client
+# Generate Prisma client
 RUN npx prisma generate
 
-# Build the application (without migrations during build)
+# Build the Next.js app
 RUN npm run build
 
-# Expose the port the app runs on
-EXPOSE 3000
-
-# Create a startup script
-RUN echo '#!/bin/sh\nnpx prisma migrate deploy\nnpm start' > /app/start.sh && chmod +x /app/start.sh
-
-# Start the application with migrations
-CMD ["/app/start.sh"] 
+# Skip the start.sh approach entirely and use direct commands
+CMD npx prisma migrate deploy && npm start
