@@ -1,6 +1,5 @@
-// prisma/schema.prisma
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["multiSchema"]
 }
 
@@ -17,75 +16,57 @@ model User {
   role          UserRole        @default(BUYER)
   phone         String?
   address       String?
-  walletAddress String?         // Solana wallet address
-  listings      EnergyListing[]
-  transactions  Transaction[]
+  walletAddress String?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+  listings      EnergyListing[]
+  transactions  Transaction[]
 }
 
 model EnergyListing {
-  id              String          @id @default(cuid())
-  sellerId        String
-  seller          User            @relation(fields: [sellerId], references: [id])
-  
-  // Basic Information
-  title           String
-  description     String?
-  energyType      EnergyType
-  
-  // Location Details
-  location        String
-  state           String
-  pincode         String
-  address         String
-  
-  // Energy Details
-  totalCapacity   Float
-  availableUnits  Float
-  minPurchase     Float
-  maxPurchase     Float
-  
-  // Pricing
-  pricePerUnit    Float
-  discount        Float?
-  
-  // Additional Details
-  deliveryMethod  DeliveryMethod
-  sourceType      SourceType
-  certification   String?
-  
-  // Wallet Details
-  sellerWalletAddress String?     // Add this line
-  
-  // Status
-  status          ListingStatus   @default(ACTIVE)
-  visibility      Boolean         @default(true)
-  featured        Boolean         @default(false)
-  
-  // Relations
-  transactions    Transaction[]
-  
-  // Timestamps
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  validUntil      DateTime?
+  id                  String         @id @default(cuid())
+  sellerId            String
+  title               String
+  description         String?
+  energyType          EnergyType
+  location            String
+  state               String
+  pincode             String
+  address             String
+  totalCapacity       Float
+  availableUnits      Float
+  minPurchase         Float
+  maxPurchase         Float
+  pricePerUnit        Float
+  discount            Float?
+  deliveryMethod      DeliveryMethod
+  sourceType          SourceType
+  certification       String?
+  sellerWalletAddress String?
+  status              ListingStatus  @default(ACTIVE)
+  visibility          Boolean        @default(true)
+  featured            Boolean        @default(false)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  validUntil          DateTime?
+  seller              User           @relation(fields: [sellerId], references: [id])
+  transactions        Transaction[]
 }
 
 model Transaction {
-  id            String            @id @default(cuid())
-  listingId     String
-  listing       EnergyListing     @relation(fields: [listingId], references: [id])
-  buyerId       String
-  buyer         User              @relation(fields: [buyerId], references: [id])
-  units         Float
-  pricePerUnit  Float
-  totalPrice    Float
-  status        TransactionStatus @default(PENDING)
-  buyerPublicKey String?          // Wallet address
-  txHash        String?           // Transaction hash
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  id             String            @id @default(cuid())
+  listingId      String
+  buyerId        String
+  units          Float
+  pricePerUnit   Float
+  totalPrice     Float
+  status         TransactionStatus @default(PENDING)
+  buyerPublicKey String?
+  txHash         String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  buyer          User              @relation(fields: [buyerId], references: [id])
+  listing        EnergyListing     @relation(fields: [listingId], references: [id])
 }
 
 enum UserRole {

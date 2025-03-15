@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     console.log('Looking up user:', email);
     let user;
     try {
-      user = await prisma.user.findUnique({
+      user =await prisma.user.findUnique({
         where: { email }
       });
     } catch (dbError) {
