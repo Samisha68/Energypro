@@ -1,6 +1,7 @@
 // src/lib/solana-wallet.ts
-import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
-import { useEffect, useState } from 'react';
+import { Connection, PublicKey, clusterApiUrl, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { useEffect, useState, useCallback } from 'react';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 
 // Interfaces for wallet functionality
 export interface SolanaWallet {
@@ -19,6 +20,12 @@ export interface WalletProviderProps {
   icon: string;
 }
 
+interface WalletBalance {
+  sol: number;
+  tokens: { [mintAddress: string]: number };
+  loading: boolean;
+}
+
 // Default connection to Devnet
 export const getSolanaConnection = (): Connection => {
   const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || clusterApiUrl('devnet');
@@ -34,6 +41,12 @@ export const getSolanaConnection = (): Connection => {
   });
 };
 
+// Function to format public key for display
+export const formatPublicKey = (key: string | null): string => {
+  if (!key) return '';
+  return `${key.slice(0, 4)}...${key.slice(-4)}`;
+};
+
 // Hook to use wallet
 export const useSolanaWallet = () => {
   const [wallet, setWallet] = useState<SolanaWallet | null>(null);
@@ -43,23 +56,17 @@ export const useSolanaWallet = () => {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [selectedWalletName, setSelectedWalletName] = useState<string | null>(null);
   const [showWalletSelector, setShowWalletSelector] = useState<boolean>(false);
-  const [, setConnectionAttempted] = useState<boolean>(false);
+  const [lastConnectionAttempt, setLastConnectionAttempt] = useState<number>(0);
+  const [balance, setBalance] = useState<WalletBalance>({
+    sol: 0,
+    tokens: {},
+    loading: false
+  });
 
   // Check for available wallet providers - only once on mount
   useEffect(() => {
     const checkForWallets = () => {
       const wallets: WalletProviderProps[] = [];
-      
-      // Debug what's available in window
-      console.log('Checking for wallets. Window objects:', {
-        phantom: !!(window as any)?.phantom?.solana,
-        solflare: !!(window as any)?.solflare,
-        backpack: !!(window as any)?.backpack?.solana,
-        slope: !!(window as any)?.slope,
-        coin98: !!(window as any)?.coin98,
-        glow: !!(window as any)?.glow,
-        solana: !!(window as any)?.solana
-      });
       
       // Check for Phantom wallet
       if ((window as any)?.phantom?.solana) {
@@ -125,15 +132,24 @@ export const useSolanaWallet = () => {
         });
       }
       
-      // Log available wallets for debugging
-      console.log('Available wallets:', wallets.map(w => w.name));
-      
       setAvailableWallets(wallets);
       return wallets;
     };
     
     // Check immediately
-    checkForWallets();
+    const wallets = checkForWallets();
+    
+    // Auto-connect to previously used wallet if it's available
+    const storedWalletName = localStorage.getItem('selectedWallet');
+    if (storedWalletName && wallets.length > 0) {
+      const savedWallet = wallets.find(w => w.name === storedWalletName);
+      if (savedWallet) {
+        // Try to auto-connect on page load
+        setTimeout(() => {
+          autoConnect(savedWallet.provider, savedWallet.name).catch(console.error);
+        }, 1000);
+      }
+    }
     
     // Also check after window loads (some wallets might initialize later)
     window.addEventListener('load', checkForWallets);
@@ -144,9 +160,9 @@ export const useSolanaWallet = () => {
   }, []);
 
   // Helper function to create wallet adapter
-  const createWalletAdapter = (provider: any, publicKey: PublicKey) => {
+  const createWalletAdapter = useCallback((provider: any, publicKeyObj: PublicKey) => {
     setWallet({
-      publicKey: publicKey,
+      publicKey: publicKeyObj,
       connected: true,
       connecting: false,
       connect: async () => {
@@ -166,117 +182,101 @@ export const useSolanaWallet = () => {
         return await provider.signAllTransactions(transactions);
       }
     });
+  }, []);
+
+  // Auto-connect function with trusted flag
+  const autoConnect = async (provider: any, walletName: string) => {
+    try {
+      if (!provider) return false;
+      
+      const resp = await provider.connect({ onlyIfTrusted: true });
+      const walletPubkey = resp.publicKey.toString();
+      
+      setSelectedWalletName(walletName);
+      localStorage.setItem('selectedWallet', walletName);
+      
+      setPublicKey(walletPubkey);
+      setConnected(true);
+      createWalletAdapter(provider, resp.publicKey);
+      
+      // Fetch the wallet balance
+      fetchBalance(walletPubkey);
+      
+      return true;
+    } catch (error) {
+      console.log("Auto-connect failed (this is normal for non-trusted connections):", error);
+      return false;
+    }
   };
 
   // Connect wallet - add rate limiting protection
-  const connect = async (walletProvider?: any, isAutoConnect: boolean = false) => {
+  const connect = async (walletProvider?: any) => {
     try {
-      // Debug available wallets
-      console.log('Connect called. Available wallets:', availableWallets.map(w => w.name));
-      
       // If no wallet provider is specified and we have multiple options, show the selector
-      if (!walletProvider && availableWallets.length > 1 && !isAutoConnect) {
-        console.log('Multiple wallets available, showing selector');
+      if (!walletProvider && availableWallets.length > 1) {
         setShowWalletSelector(true);
         return;
       }
       
       // If no wallets are available, check again
       if (availableWallets.length === 0) {
-        console.log('No wallets available, checking again...');
-        
-        // If still no wallets, show an error
-        if (availableWallets.length === 0) {
-          console.error('No wallet providers found');
-          alert('No Solana wallets detected. Please install a wallet like Phantom, Solflare, or Backpack.');
-          throw new Error('No wallet providers found');
-        }
+        throw new Error('No wallet providers found. Please install a Solana wallet like Phantom.');
       }
       
-      // Prevent multiple connection attempts in quick succession
-      if (connecting) {
-        console.log('Already attempting to connect, please wait...');
+      // Prevent multiple connection attempts in quick succession (1 second cooldown)
+      const now = Date.now();
+      if (connecting || (now - lastConnectionAttempt < 1000)) {
+        console.log('Connection attempt in progress or rate limited');
         return;
       }
       
-      setConnectionAttempted(true);
       setConnecting(true);
+      setLastConnectionAttempt(now);
 
       let provider;
+      let walletName: string;
+      
       if (walletProvider) {
         provider = walletProvider;
-        console.log('Using provided wallet provider');
+        walletName = availableWallets.find(w => w.provider === walletProvider)?.name || 'Unknown Wallet';
       } else if (availableWallets.length > 0) {
         provider = availableWallets[0].provider;
-        setSelectedWalletName(availableWallets[0].name);
-        console.log('Using first available wallet:', availableWallets[0].name);
+        walletName = availableWallets[0].name;
       } else {
         throw new Error('No wallet providers found');
       }
 
-      // Save the selected wallet name
-      const walletName = availableWallets.find(w => w.provider === provider)?.name;
-      if (walletName) {
+      try {
+        const resp = await provider.connect();
+        const walletPubkey = resp.publicKey.toString();
+        
         setSelectedWalletName(walletName);
         localStorage.setItem('selectedWallet', walletName);
-        console.log('Selected wallet:', walletName);
-      }
-
-      // Check if wallet is already connected
-      if (provider.isConnected) {
-        try {
-          console.log('Wallet is already connected, trying trusted connect');
-          const resp = await provider.connect({ onlyIfTrusted: true });
-          setPublicKey(resp.publicKey.toString());
-          setConnected(true);
-          
-          // Create wallet adapter
-          createWalletAdapter(provider, resp.publicKey);
-          console.log('Connected with trusted app');
-          return;
-        } catch (connectError: unknown) {
-          // If connecting with trusted fails, attempt normal connect
-          console.log('Not a trusted app, trying normal connect:', 
-            connectError instanceof Error ? connectError.message : 'Unknown error');
-            
-          // If we get a rate limit error, don't try again immediately
-          if (connectError instanceof Error && 
-              connectError.message.includes('rate limit')) {
-            throw new Error('Wallet connection rate limited. Please try again in a few seconds.');
-          }
+        
+        setPublicKey(walletPubkey);
+        setConnected(true);
+        createWalletAdapter(provider, resp.publicKey);
+        
+        // Fetch the wallet balance
+        fetchBalance(walletPubkey);
+      } catch (connectError) {
+        console.error('Wallet connection error:', connectError);
+        
+        if (connectError instanceof Error && 
+            (connectError.message.includes('rate limit') || 
+             connectError.message.includes('timeout'))) {
+          throw new Error('Wallet connection timed out. Please try again in a few seconds.');
         }
+        
+        throw connectError;
       }
-
-      console.log('Attempting normal wallet connect');
-      const resp = await provider.connect();
-      setPublicKey(resp.publicKey.toString());
-      setConnected(true);
-      console.log('Wallet connected successfully:', resp.publicKey.toString());
-
-      // Create wallet adapter
-      createWalletAdapter(provider, resp.publicKey);
-
     } catch (error) {
       console.error('Failed to connect wallet', error);
-      
-      // Show a user-friendly error message
-      if (error instanceof Error) {
-        if (error.message.includes('rate limit')) {
-          alert('Wallet connection is being rate limited. Please wait a few seconds before trying again.');
-        } else {
-          alert(`Failed to connect wallet: ${error.message}`);
-        }
-      } else {
-        alert('Failed to connect wallet. Please try again later.');
-      }
-      
-      throw new Error(error instanceof Error ? error.message : 'Failed to connect wallet');
+      throw error;
     } finally {
-      // Add a delay before allowing another connection attempt
       setTimeout(() => {
         setConnecting(false);
-        setShowWalletSelector(false);
-      }, 2000); // 2 second cooldown between connection attempts
+      }, 1000);
     }
   };
 
@@ -289,6 +289,7 @@ export const useSolanaWallet = () => {
       setPublicKey(null);
       setSelectedWalletName(null);
       localStorage.removeItem('selectedWallet');
+      setBalance({ sol: 0, tokens: {}, loading: false });
     }
   };
 
@@ -302,6 +303,133 @@ export const useSolanaWallet = () => {
     }
   };
 
+  // Fetch SOL balance
+  const fetchSOLBalance = useCallback(async (walletPubkey: string): Promise<number> => {
+    try {
+      const connection = getSolanaConnection();
+      const pubkey = new PublicKey(walletPubkey);
+      const balance = await connection.getBalance(pubkey);
+      return balance / LAMPORTS_PER_SOL;
+    } catch (error) {
+      console.error('Error fetching SOL balance:', error);
+      return 0;
+    }
+  }, []);
+
+  // Fetch token balance
+  const fetchTokenBalance = useCallback(async (
+    walletPubkey: string, 
+    tokenMintAddress: string
+  ): Promise<number | null> => {
+    try {
+      const connection = getSolanaConnection();
+      const walletPublicKey = new PublicKey(walletPubkey);
+      const tokenMintPublicKey = new PublicKey(tokenMintAddress);
+      
+      // Get the associated token account address
+      const tokenAccount = await getAssociatedTokenAddress(
+        tokenMintPublicKey,
+        walletPublicKey
+      );
+      
+      try {
+        // Try to get the balance
+        const tokenAccountInfo = await connection.getTokenAccountBalance(tokenAccount);
+        return Number(tokenAccountInfo.value.uiAmount);
+      } catch (error) {
+        // Token account might not exist
+        console.log('Token account not found:', error);
+        return 0;
+      }
+    } catch (error) {
+      console.error('Error fetching token balance:', error);
+      return null;
+    }
+  }, []);
+
+  // Fetch all balances (SOL and tokens)
+  const fetchBalance = useCallback(async (walletPubkey: string | null) => {
+    if (!walletPubkey) return;
+    
+    setBalance(prev => ({ ...prev, loading: true }));
+    
+    try {
+      const solBalance = await fetchSOLBalance(walletPubkey);
+      
+      // Update tokens if needed
+      const tokens: { [mintAddress: string]: number } = {};
+      
+      // Check for BIJLEE token if we have its address
+      const bijleeTokenMint = process.env.NEXT_PUBLIC_BIJLEE_TOKEN_MINT;
+      if (bijleeTokenMint) {
+        const bijleeBalance = await fetchTokenBalance(walletPubkey, bijleeTokenMint);
+        if (bijleeBalance !== null) {
+          tokens[bijleeTokenMint] = bijleeBalance;
+        }
+      }
+      
+      setBalance({
+        sol: solBalance,
+        tokens: tokens,
+        loading: false
+      });
+    } catch (error) {
+      console.error('Error fetching wallet balances:', error);
+      setBalance(prev => ({ ...prev, loading: false }));
+    }
+  }, [fetchSOLBalance, fetchTokenBalance]);
+
+  // Update balance when wallet changes
+  useEffect(() => {
+    if (connected && publicKey) {
+      fetchBalance(publicKey);
+      
+      // Set up interval to refresh balance every 30 seconds
+      const intervalId = setInterval(() => {
+        fetchBalance(publicKey);
+      }, 30000);
+      
+      return () => clearInterval(intervalId);
+    }
+  }, [connected, publicKey, fetchBalance]);
+
+  // Listen for wallet connection/disconnection events
+  useEffect(() => {
+    const handleWalletChange = () => {
+      // Check if wallet is still connected
+      if (wallet?.publicKey && connected) {
+        fetchBalance(wallet.publicKey.toString());
+      } else {
+        // If we detect a wallet change but we're not connected, try to reconnect
+        const storedWalletName = localStorage.getItem('selectedWallet');
+        if (storedWalletName) {
+          const savedWallet = availableWallets.find(w => w.name === storedWalletName);
+          if (savedWallet) {
+            autoConnect(savedWallet.provider, savedWallet.name).catch(() => {
+              // Clear connection state if auto-connect fails
+              setWallet(null);
+              setConnected(false);
+              setPublicKey(null);
+            });
+          }
+        }
+      }
+    };
+
+    // Add event listeners for wallet changes
+    window.addEventListener('focus', handleWalletChange);
+    
+    // Some wallets dispatch custom events
+    window.addEventListener('wallet-disconnected', disconnect);
+    window.addEventListener('wallet-connected', handleWalletChange);
+    
+    return () => {
+      window.removeEventListener('focus', handleWalletChange);
+      window.removeEventListener('wallet-disconnected', disconnect);
+      window.removeEventListener('wallet-connected', handleWalletChange);
+    };
+  }, [wallet, connected, availableWallets, autoConnect, disconnect, fetchBalance]);
+
   return {
     wallet,
     connecting,
@@ -313,12 +441,8 @@ export const useSolanaWallet = () => {
     setShowWalletSelector,
     connect,
     disconnect,
-    connectToWallet
+    connectToWallet,
+    balance,
+    fetchBalance
   };
-};
-
-// Format wallet address
-export const formatPublicKey = (key: string | null): string => {
-  if (!key) return '';
-  return `${key.slice(0, 4)}...${key.slice(-4)}`;
 };

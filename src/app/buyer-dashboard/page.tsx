@@ -5,10 +5,11 @@ import React, { useState, useEffect } from 'react';
 import { Wallet, Search, Package, MapPin, ChevronDown, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 import { PublicKey } from '@solana/web3.js';
-import { useSolanaWallet, formatPublicKey, getSolanaConnection } from '@/lib/solana-wallet';
+import { formatPublicKey, getSolanaConnection } from '@/lib/solana-wallet';
 import { processPurchase, checkListingInitialized } from '@/lib/bijlee-exchange'
 import { getAssociatedTokenAddress } from '@solana/spl-token';
-import WalletSelector from '@/components/WalletSelector';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { SolanaProvider, WalletButton } from '../components/solana-provider';
 
 // Constants
 const BIJLEE_TOKEN_MINT = new PublicKey("HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86");
@@ -42,7 +43,14 @@ interface Listing {
   sellerWalletAddress: string;
 }
 
-export default function BuyerDashboard() {
+// Wrap the dashboard in the wallet provider
+const BuyerDashboardWithProvider = () => (
+  <SolanaProvider>
+    <BuyerDashboard />
+  </SolanaProvider>
+);
+
+function BuyerDashboard() {
   // State Management
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,25 +66,14 @@ export default function BuyerDashboard() {
   const [listingInitialized, setListingInitialized] = useState<boolean | null>(null);
   const [checkingListing, setCheckingListing] = useState<boolean>(false);
 
-  // Solana wallet integration
-  const { 
-    wallet, 
-    connected, 
-    connect, 
-    connecting, 
-    publicKey, 
-    availableWallets, 
-    showWalletSelector, 
-    setShowWalletSelector,
-    connectToWallet,
-    selectedWalletName
-  } = useSolanaWallet();
+  // Use the wallet adapter hook
+  const { publicKey, connected, wallet, connecting } = useWallet();
 
   // Fetch listings on component mount
   useEffect(() => {
     fetchListings();
     if (connected && publicKey) {
-      checkTokenBalance(publicKey);
+      checkTokenBalance(publicKey.toString());
     }
   }, [connected, publicKey]);
 
@@ -153,33 +150,6 @@ export default function BuyerDashboard() {
     }
   };
 
-  // Handle wallet connection
-  const handleWalletConnect = async () => {
-    try {
-      setError(null);
-      await connect();
-    } catch (error) {
-      setError('Failed to connect wallet. Please try again.');
-      console.error('Wallet connection error:', error);
-    }
-  };
-
-  // Handle wallet selection
-  const handleWalletSelect = async (walletName: string) => {
-    try {
-      setError(null);
-      await connectToWallet(walletName);
-      
-      // Check token balance after connecting
-      if (publicKey) {
-        checkTokenBalance(publicKey);
-      }
-    } catch (error) {
-      setError('Failed to connect selected wallet. Please try again.');
-      console.error('Wallet selection error:', error);
-    }
-  };
-
   // Check if listing is initialized on blockchain
   const checkListingOnChain = async (listing: Listing) => {
     if (!listing) return;
@@ -212,15 +182,6 @@ export default function BuyerDashboard() {
   // Handle Purchase
   const handlePurchase = async () => {
     if (!connected || !wallet) {
-      if (availableWallets.length > 1) {
-        setShowWalletSelector(true);
-      } else {
-        try {
-          await connect();
-        } catch {
-          setError('Failed to connect wallet. Please try again.');
-        }
-      }
       return;
     }
   
@@ -243,8 +204,8 @@ export default function BuyerDashboard() {
   
     try {
       // Check if buyer has enough tokens
-      if (buyerTokenBalance === null) {
-        await checkTokenBalance(publicKey!);
+      if (buyerTokenBalance === null && publicKey) {
+        await checkTokenBalance(publicKey.toString());
       }
       
       const totalCost = selectedOffer.pricePerUnit * quantity;
@@ -262,7 +223,7 @@ export default function BuyerDashboard() {
       
       // Call the processPurchase function from bijlee-exchange.ts
       const result = await processPurchase(
-        wallet,
+        wallet as any,
         connection,
         selectedOffer.id, // This should be the listing pubkey on Solana
         selectedOffer.id, // This is the listing ID in your database
@@ -278,7 +239,7 @@ export default function BuyerDashboard() {
       // Record the purchase in your backend API
       const purchaseData = {
         listingId: selectedOffer.id,
-        buyerPublicKey: publicKey,
+        buyerPublicKey: publicKey?.toString(),
         quantity: quantity,
         totalAmount: totalCost,
         sellerWalletAddress: sellerWalletAddress,
@@ -306,10 +267,11 @@ export default function BuyerDashboard() {
       // Refresh listings and token balance after successful purchase
       fetchListings();
       if (publicKey) {
-        checkTokenBalance(publicKey);
+        checkTokenBalance(publicKey.toString());
       }
-    } catch {
-      setError('Failed to process purchase. Please try again.');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to process purchase. Please try again.';
+      setError(errorMessage);
     } finally {
       setProcessingPurchase(false);
     }
@@ -393,32 +355,8 @@ export default function BuyerDashboard() {
                 </div>
               )}
               
-              <div className="flex items-center">
-                {connected ? (
-                  <div className="flex items-center">
-                    <span className="text-green-400 mr-2 flex items-center">
-                      <span className="w-2 h-2 bg-green-400 rounded-full mr-1"></span>
-                      {selectedWalletName || 'Connected'}:
-                    </span>
-                    <span className="text-white">{formatPublicKey(publicKey || '')}</span>
-                    <button
-                      onClick={() => setShowWalletSelector(true)}
-                      className="ml-2 text-blue-400 hover:text-blue-300 text-sm"
-                    >
-                      Change
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleWalletConnect}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition"
-                    disabled={connecting}
-                  >
-                    <Wallet size={16} />
-                    {connecting ? 'Connecting...' : 'Connect Wallet'}
-                  </button>
-                )}
-              </div>
+              {/* Add the wallet button here */}
+              <WalletButton />
             </div>
           </div>
         </div>
@@ -697,14 +635,18 @@ export default function BuyerDashboard() {
                   ) : quantity === 0 ? (
                     'Enter Quantity to Purchase'
                   ) : (
-                    'Confirm Purchase with Phantom'
+                    'Confirm Purchase'
                   )}
                 </button>
 
                 {!connected && (
-                  <p className="text-sm text-gray-400 text-center mt-2">
-                    Please connect your Phantom wallet to make a purchase
-                  </p>
+                  <div className="text-center mt-4">
+                    <p className="text-sm text-gray-400 mb-3">
+                      Please connect your wallet to make a purchase
+                    </p>
+                    {/* Add the wallet button here instead of the incorrect SolanaProvider usage */}
+                    <WalletButton />
+                  </div>
                 )}
               </div>
             </div>
@@ -722,7 +664,7 @@ export default function BuyerDashboard() {
             </p>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-6">
-            <h3 className="text-gray-400 text-sm">Active Sellers</h3>
+          <h3 className="text-gray-400 text-sm">Active Sellers</h3>
             <p className="text-2xl font-bold text-white mt-2">
               {new Set(listings.map(listing => listing.sellerId)).size}
             </p>
@@ -737,15 +679,8 @@ export default function BuyerDashboard() {
           </div>
         </div>
       </div>
-
-      {/* Wallet Selector Modal */}
-      {showWalletSelector && (
-        <WalletSelector 
-          wallets={availableWallets}
-          onSelect={handleWalletSelect}
-          onCancel={() => setShowWalletSelector(false)}
-        />
-      )}
     </div>
   );
 }
+
+export default BuyerDashboardWithProvider;

@@ -1,11 +1,3 @@
-/*
-  Warnings:
-
-  - You are about to drop the `EnergyListing` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Transaction` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `User` table. If the table is not empty, all the data it contains will be lost.
-
-*/
 -- CreateEnum
 CREATE TYPE "UserRole" AS ENUM ('BUYER', 'SELLER');
 
@@ -23,42 +15,6 @@ CREATE TYPE "ListingStatus" AS ENUM ('ACTIVE', 'PENDING', 'SOLD_OUT', 'CANCELLED
 
 -- CreateEnum
 CREATE TYPE "TransactionStatus" AS ENUM ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED');
-
--- DropForeignKey
-ALTER TABLE "public"."EnergyListing" DROP CONSTRAINT "EnergyListing_sellerId_fkey";
-
--- DropForeignKey
-ALTER TABLE "public"."Transaction" DROP CONSTRAINT "Transaction_buyerId_fkey";
-
--- DropForeignKey
-ALTER TABLE "public"."Transaction" DROP CONSTRAINT "Transaction_listingId_fkey";
-
--- DropTable
-DROP TABLE "public"."EnergyListing";
-
--- DropTable
-DROP TABLE "public"."Transaction";
-
--- DropTable
-DROP TABLE "public"."User";
-
--- DropEnum
-DROP TYPE "public"."DeliveryMethod";
-
--- DropEnum
-DROP TYPE "public"."EnergyType";
-
--- DropEnum
-DROP TYPE "public"."ListingStatus";
-
--- DropEnum
-DROP TYPE "public"."SourceType";
-
--- DropEnum
-DROP TYPE "public"."TransactionStatus";
-
--- DropEnum
-DROP TYPE "public"."UserRole";
 
 -- CreateTable
 CREATE TABLE "User" (
@@ -131,7 +87,7 @@ CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 ALTER TABLE "EnergyListing" ADD CONSTRAINT "EnergyListing_sellerId_fkey" FOREIGN KEY ("sellerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Transaction" ADD CONSTRAINT "Transaction_listingId_fkey" FOREIGN KEY ("listingId") REFERENCES "EnergyListing"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Transaction" ADD CONSTRAINT "Transaction_buyerId_fkey" FOREIGN KEY ("buyerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Transaction" ADD CONSTRAINT "Transaction_buyerId_fkey" FOREIGN KEY ("buyerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Transaction" ADD CONSTRAINT "Transaction_listingId_fkey" FOREIGN KEY ("listingId") REFERENCES "EnergyListing"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

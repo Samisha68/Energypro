@@ -4,7 +4,7 @@ import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccou
 import * as anchor from '@project-serum/anchor';
 import { Program, Idl } from '@project-serum/anchor';
 import { BN } from 'bn.js';
-
+import { WalletContextState } from '@solana/wallet-adapter-react';
 // Constants
 const BIJLEE_PROGRAM_ID = new PublicKey(process.env.NEXT_PUBLIC_BIJLEE_PROGRAM_ID || "71p7sfU3FKyP2hv9aVqZV1ha6ZzJ2VkReNjsGDoqtdRQ");
 const BIJLEE_TOKEN_MINT = new PublicKey(process.env.NEXT_PUBLIC_BIJLEE_TOKEN_MINT || "HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86");
@@ -527,7 +527,7 @@ export function getProgram(connection: Connection, wallet: WalletAdapter): Progr
 
 // Process a purchase transaction
 export async function processPurchase(
-  wallet: WalletAdapter,
+  wallet: WalletContextState,
   connection: Connection,
   listingPubkey: string,
   listingId: string,
@@ -561,7 +561,7 @@ export async function processPurchase(
       throw new Error(`Invalid seller address: ${error instanceof Error ? error.message : String(error)}`);
     }
     
-    const program = getProgram(connection, wallet);
+    const program = getProgram(connection, wallet as any);
     const buyer = wallet.publicKey;
     
     // Calculate PDA for transaction account
