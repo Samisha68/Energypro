@@ -25,7 +25,7 @@ const ListingSchema = z.object({
   sourceType: z.enum(['RESIDENTIAL', 'COMMERCIAL', 'INDUSTRIAL', 'UTILITY']),
   certification: z.string().optional().nullable(),
   discount: z.number().min(0).max(100).optional().nullable(),
-  sellerWalletAddress: z.string().min(32, "Valid wallet address required")
+  sellerWalletAddress: z.string().min(32, "Valid wallet address required").optional().nullable()
 });
 
 // Get current user from JWT
@@ -40,7 +40,8 @@ async function getCurrentUserId() {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
     return decoded.userId;
-  } catch {
+  } catch (error) {
+    console.error('JWT verification error:', error);
     throw new Error('Invalid token');
   }
 }
@@ -56,7 +57,8 @@ export async function GET(request: Request) {
     if (sellerId === 'current') {
       try {
         actualSellerId = await getCurrentUserId();
-      } catch {
+      } catch (error) {
+        console.error('Error getting current user ID:', error);
         return NextResponse.json(
           { success: false, error: 'Authentication required to view your listings' },
           { status: 401 }
@@ -81,55 +83,102 @@ export async function GET(request: Request) {
       success: true, 
       data: listings 
     });
-  } catch {
-    return NextResponse.json({ success: false, error: 'Failed to fetch listings' }, { status: 500 });
+  } catch (error) {
+    console.error('Error fetching listings:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Failed to fetch listings',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const userId = await getCurrentUserId();
+    console.log('Received listing creation request:', body);
+    
+    let userId;
+    try {
+      userId = await getCurrentUserId();
+      console.log('User ID for listing creation:', userId);
+    } catch (authError) {
+      console.error('Authentication error during listing creation:', authError);
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Authentication failed',
+        details: authError instanceof Error ? authError.message : 'Unknown authentication error'
+      }, { status: 401 });
+    }
     
     // Validate the input
-    const validatedData = ListingSchema.parse(body);
-
-    // Create the listing
-    const listing = await prisma.energyListing.create({
-      data: {
-        ...validatedData,
-        sellerId: userId,
-        totalCapacity: Number(validatedData.totalCapacity),
-        availableUnits: Number(validatedData.availableUnits),
-        minPurchase: Number(validatedData.minPurchase),
-        maxPurchase: Number(validatedData.maxPurchase),
-        pricePerUnit: Number(validatedData.pricePerUnit),
-        discount: validatedData.discount ? Number(validatedData.discount) : null,
-        sellerWalletAddress: validatedData.sellerWalletAddress,
-        status: "ACTIVE",
-        visibility: true,
-        featured: false
-      },
-      include: {
-        seller: {
-          select: {
-            name: true,
-            email: true
+    try {
+      const validatedData = ListingSchema.parse(body);
+      console.log('Validated listing data:', validatedData);
+      
+      // Create the listing
+      const listing = await prisma.energyListing.create({
+        data: {
+          ...validatedData,
+          sellerId: userId,
+          totalCapacity: Number(validatedData.totalCapacity),
+          availableUnits: Number(validatedData.availableUnits),
+          minPurchase: Number(validatedData.minPurchase),
+          maxPurchase: Number(validatedData.maxPurchase),
+          pricePerUnit: Number(validatedData.pricePerUnit),
+          discount: validatedData.discount ? Number(validatedData.discount) : null,
+          sellerWalletAddress: validatedData.sellerWalletAddress,
+          status: "ACTIVE",
+          visibility: true,
+          featured: false
+        },
+        include: {
+          seller: {
+            select: {
+              name: true,
+              email: true
+            }
           }
         }
-      }
-    });
-
-    return NextResponse.json({ success: true, data: listing });
-  } catch {
-    return NextResponse.json({ success: false, error: 'Failed to create listing' }, { status: 500 });
+      });
+      
+      console.log('Listing created successfully:', listing.id);
+      return NextResponse.json({ success: true, data: listing });
+    } catch (validationError) {
+      console.error('Validation error during listing creation:', validationError);
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Validation failed',
+        details: validationError instanceof Error ? validationError.message : 'Unknown validation error'
+      }, { status: 400 });
+    }
+  } catch (error) {
+    console.error('Unexpected error during listing creation:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Failed to create listing',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }
 
 export async function PUT(request: Request) {
   try {
     const body = await request.json();
-    const userId = await getCurrentUserId();
+    console.log('Received listing update request for ID:', body.id);
+    
+    let userId;
+    try {
+      userId = await getCurrentUserId();
+      console.log('User ID for listing update:', userId);
+    } catch (authError) {
+      console.error('Authentication error during listing update:', authError);
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Authentication failed',
+        details: authError instanceof Error ? authError.message : 'Unknown authentication error'
+      }, { status: 401 });
+    }
     
     if (!body.id) {
       return NextResponse.json(
@@ -158,42 +207,58 @@ export async function PUT(request: Request) {
     }
 
     // Validate the input
-    const validatedData = ListingSchema.parse(body);
+    try {
+      const validatedData = ListingSchema.parse(body);
+      console.log('Validated update data for listing:', body.id);
 
-    const listing = await prisma.energyListing.update({
-      where: { id: body.id },
-      data: {
-        title: validatedData.title,
-        description: validatedData.description,
-        energyType: validatedData.energyType,
-        location: validatedData.location,
-        state: validatedData.state,
-        pincode: validatedData.pincode,
-        address: validatedData.address,
-        totalCapacity: Number(validatedData.totalCapacity),
-        availableUnits: Number(validatedData.availableUnits),
-        minPurchase: Number(validatedData.minPurchase),
-        maxPurchase: Number(validatedData.maxPurchase),
-        pricePerUnit: Number(validatedData.pricePerUnit),
-        deliveryMethod: validatedData.deliveryMethod,
-        sourceType: validatedData.sourceType,
-        certification: validatedData.certification,
-        discount: validatedData.discount ? Number(validatedData.discount) : null,
-        sellerWalletAddress: validatedData.sellerWalletAddress
-      },
-      include: {
-        seller: {
-          select: {
-            name: true,
-            email: true
+      const listing = await prisma.energyListing.update({
+        where: { id: body.id },
+        data: {
+          title: validatedData.title,
+          description: validatedData.description,
+          energyType: validatedData.energyType,
+          location: validatedData.location,
+          state: validatedData.state,
+          pincode: validatedData.pincode,
+          address: validatedData.address,
+          totalCapacity: Number(validatedData.totalCapacity),
+          availableUnits: Number(validatedData.availableUnits),
+          minPurchase: Number(validatedData.minPurchase),
+          maxPurchase: Number(validatedData.maxPurchase),
+          pricePerUnit: Number(validatedData.pricePerUnit),
+          deliveryMethod: validatedData.deliveryMethod,
+          sourceType: validatedData.sourceType,
+          certification: validatedData.certification,
+          discount: validatedData.discount ? Number(validatedData.discount) : null,
+          sellerWalletAddress: validatedData.sellerWalletAddress
+        },
+        include: {
+          seller: {
+            select: {
+              name: true,
+              email: true
+            }
           }
         }
-      }
-    });
+      });
 
-    return NextResponse.json({ success: true, data: listing });
-  } catch {
-    return NextResponse.json({ success: false, error: 'Failed to update listing' }, { status: 500 });
+      console.log('Listing updated successfully:', body.id);
+      return NextResponse.json({ success: true, data: listing });
+    } catch (validationError) {
+      console.error('Validation error during listing update:', validationError);
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Validation failed',
+        details: validationError instanceof Error ? validationError.message : 'Unknown validation error'
+      }, { status: 400 });
+    }
+  } catch (error) {
+    console.error('Unexpected error during listing update:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Failed to update listing',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }
 
@@ -201,7 +266,20 @@ export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
-    const userId = await getCurrentUserId();
+    console.log('Received listing deletion request for ID:', id);
+    
+    let userId;
+    try {
+      userId = await getCurrentUserId();
+      console.log('User ID for listing deletion:', userId);
+    } catch (authError) {
+      console.error('Authentication error during listing deletion:', authError);
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Authentication failed',
+        details: authError instanceof Error ? authError.message : 'Unknown authentication error'
+      }, { status: 401 });
+    }
 
     if (!id) {
       return NextResponse.json(
@@ -233,11 +311,17 @@ export async function DELETE(request: Request) {
       where: { id }
     });
 
+    console.log('Listing deleted successfully:', id);
     return NextResponse.json({
       success: true,
       message: 'Listing deleted successfully'
     });
-  } catch {
-    return NextResponse.json({ success: false, error: 'Failed to delete listing' }, { status: 500 });
+  } catch (error) {
+    console.error('Unexpected error during listing deletion:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Failed to delete listing',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }

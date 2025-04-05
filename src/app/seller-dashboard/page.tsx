@@ -2,13 +2,15 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Package, MapPin, Edit, Trash, BarChart4, Wallet, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Plus, Package, MapPin, Edit, Trash, BarChart4, AlertTriangle, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { Listing, EnergyType, DeliveryMethod, SourceType } from '@/lib/types/listing';
 import { getSolanaConnection } from '@/lib/solana-wallet';
-import { createSellerTokenAccount, initializeListingOnChain, checkListingInitialized } from '@/lib/bijlee-exchange';
+import { initializeListingOnChain, checkListingInitialized } from '@/lib/bijlee-exchange';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { SolanaProvider, WalletButton } from '../components/solana-provider';
+import { createWalletAdapter, formatAddress } from '@/lib/wallet-helper';
+
 
 interface ListingFormData {
   id?: string;
@@ -40,13 +42,22 @@ function SellerDashboardContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [processingAction, setProcessingAction] = useState<boolean>(false);
-  const [creatingTokenAccount, setCreatingTokenAccount] = useState(false);
   const [initializedListings, setInitializedListings] = useState<Record<string, boolean>>({});
   const [checkingInitialization, setCheckingInitialization] = useState<boolean>(false);
-  const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
+  
+  // Blockchain status state
+  const [blockchainStatus, setBlockchainStatus] = useState<{
+    action: string;
+    status: 'idle' | 'loading' | 'success' | 'error';
+    message?: string;
+  }>({
+    action: '',
+    status: 'idle'
+  });
   
   // Use the wallet adapter hook
-  const { publicKey, connected, wallet, connecting } = useWallet();
+  const walletContext = useWallet();
+  const { publicKey, connected, wallet, connecting } = walletContext;
   
   const initialFormState: ListingFormData = {
     title: '',
@@ -173,14 +184,23 @@ function SellerDashboardContent() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!connected) {
+    if (!connected || !wallet || !publicKey) {
       setError('Please connect your wallet first');
       return;
     }
     
     setProcessingAction(true);
+    setBlockchainStatus({
+      action: editingListing ? 'updating' : 'creating',
+      status: 'loading',
+      message: `${editingListing ? 'Updating' : 'Creating'} listing on blockchain... (This will automatically set up your token account if needed)`
+    });
     
     try {
+      // Create a wallet adapter using the wallet context
+      const walletAdapter = createWalletAdapter(walletContext);
+      const connection = getSolanaConnection();
+      
       if (editingListing) {
         // Update the listing in your backend
         const backendResponse = await fetch('/api/listings', {
@@ -201,16 +221,25 @@ function SellerDashboardContent() {
         }
         
         // Initialize or update the listing on the blockchain
-        if (wallet && connected) {
-          const connection = getSolanaConnection();
-          await initializeListingOnChain(
-            wallet as any,
-            connection,
-            responseData.data.id,
-            formData.pricePerUnit,
-            formData.availableUnits
-          );
+        const result = await initializeListingOnChain(
+          walletAdapter,
+          connection,
+          responseData.data.id,
+          formData.pricePerUnit,
+          formData.availableUnits,
+          formData.minPurchase,
+          formData.maxPurchase
+        );
+        
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to update listing on blockchain');
         }
+        
+        setBlockchainStatus({
+          action: 'updating',
+          status: 'success',
+          message: 'Listing updated successfully on blockchain! Token account is ready to receive BIJLEE tokens.'
+        });
       } else {
         // Create a new listing in your backend
         const backendResponse = await fetch('/api/listings', {
@@ -227,17 +256,26 @@ function SellerDashboardContent() {
           throw new Error(responseData.error || 'Failed to create listing');
         }
         
-        // Initialize the listing on the blockchain
-        if (wallet && connected) {
-          const connection = getSolanaConnection();
-          await initializeListingOnChain(
-            wallet as any,
-            connection,
-            responseData.data.id,
-            formData.pricePerUnit,
-            formData.availableUnits
-          );
+        // Initialize the listing on the blockchain (with automatic token account creation)
+        const result = await initializeListingOnChain(
+          walletAdapter,
+          connection,
+          responseData.data.id,
+          formData.pricePerUnit,
+          formData.availableUnits,
+          formData.minPurchase,
+          formData.maxPurchase
+        );
+        
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to initialize listing on blockchain');
         }
+        
+        setBlockchainStatus({
+          action: 'creating',
+          status: 'success',
+          message: 'Listing created successfully on blockchain! Token account is ready to receive BIJLEE tokens.'
+        });
       }
       
       // Reset and refresh
@@ -250,8 +288,22 @@ function SellerDashboardContent() {
     } catch (error) {
       console.error('Submission error:', error);
       setError(error instanceof Error ? error.message : 'Failed to process listing');
+      setBlockchainStatus({
+        action: editingListing ? 'updating' : 'creating',
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
     } finally {
       setProcessingAction(false);
+      // Clear blockchain status after 5 seconds if successful
+      if (blockchainStatus.status === 'success') {
+        setTimeout(() => {
+          setBlockchainStatus({
+            action: '',
+            status: 'idle'
+          });
+        }, 5000);
+      }
     }
   };
 
@@ -308,73 +360,33 @@ function SellerDashboardContent() {
     }
   };
 
-  // Create token account
-  const handleCreateTokenAccount = async () => {
-    if (!connected || !wallet) {
-      setError('Please connect your wallet first');
-      return;
-    }
-
-    // Get the seller's wallet address from the selected listing
-    const sellerWalletAddress = selectedListing?.sellerWalletAddress;
-
-    // Debug log to check the data
-    console.log('Selected Listing:', selectedListing);
-    console.log('Seller Wallet Address:', sellerWalletAddress);
-
-    // Check if seller wallet address is provided and valid
-    if (!sellerWalletAddress || sellerWalletAddress.trim() === '') {
-      setError('Please select a listing first');
-      return;
-    }
-
-    // Validate the wallet address format
-    if (sellerWalletAddress.length < 32) {
-      setError('Invalid seller wallet address in the selected listing');
-      return;
-    }
-
-    setCreatingTokenAccount(true);
-    setError(null);
-
-    try {
-      const connection = getSolanaConnection();
-      const result = await createSellerTokenAccount(
-        wallet as any,
-        connection,
-        sellerWalletAddress.trim()
-      );
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to create token account');
-      }
-
-      alert('Token account created successfully! You can now receive BIJLEE tokens.');
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to create token account');
-    } finally {
-      setCreatingTokenAccount(false);
-    }
-  };
-
-  // Handle listing initialization on blockchain
+  // Initialize listing on blockchain
   const handleInitializeOnChain = async (listing: Listing) => {
-    if (!connected || !wallet) {
+    if (!connected || !wallet || !publicKey) {
       setError('Please connect your wallet first');
       return;
     }
 
     setProcessingAction(true);
     setError(null);
+    setBlockchainStatus({
+      action: 'initializing',
+      status: 'loading',
+      message: `Initializing listing "${listing.title}" on blockchain... (This will automatically set up your token account if needed)`
+    });
 
     try {
       const connection = getSolanaConnection();
+      const walletAdapter = createWalletAdapter(walletContext);
+      
       const result = await initializeListingOnChain(
-        wallet as any,
+        walletAdapter,
         connection,
         listing.id,
         listing.pricePerUnit,
-        listing.availableUnits
+        listing.availableUnits,
+        listing.minPurchase,
+        listing.maxPurchase
       );
 
       if (!result.success) {
@@ -409,16 +421,34 @@ function SellerDashboardContent() {
         }
       }
 
-      alert(`Listing "${listing.title}" successfully initialized on the blockchain!`);
+      setBlockchainStatus({
+        action: 'initializing',
+        status: 'success',
+        message: `Listing "${listing.title}" successfully initialized on blockchain! Token account is ready to receive BIJLEE tokens.`
+      });
     } catch (error) {
       console.error('Error initializing listing on blockchain:', error);
       setError(error instanceof Error ? error.message : 'Failed to initialize listing on blockchain');
+      setBlockchainStatus({
+        action: 'initializing',
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
     } finally {
       setProcessingAction(false);
+      // Clear blockchain status after 5 seconds if successful
+      if (blockchainStatus.status === 'success') {
+        setTimeout(() => {
+          setBlockchainStatus({
+            action: '',
+            status: 'idle'
+          });
+        }, 5000);
+      }
     }
   };
 
-  // Add this to your listing card JSX
+  // Render initialization status for each listing
   const renderInitializationStatus = (listing: Listing) => {
     if (checkingInitialization) {
       return (
@@ -451,6 +481,28 @@ function SellerDashboardContent() {
       );
     }
   };
+  
+  // Render blockchain status in the UI
+  const renderBlockchainStatus = () => {
+    if (blockchainStatus.status === 'idle') return null;
+    
+    const colors = {
+      loading: 'bg-blue-500/10 border-l-4 border-blue-500 text-blue-300',
+      success: 'bg-green-500/10 border-l-4 border-green-500 text-green-300',
+      error: 'bg-red-500/10 border-l-4 border-red-500 text-red-300'
+    };
+    
+    return (
+      <div className={`p-4 mb-6 ${colors[blockchainStatus.status]}`}>
+        <div className="flex items-center">
+          {blockchainStatus.status === 'loading' && (
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500 mr-2"></div>
+          )}
+          <p>{blockchainStatus.message}</p>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-blue-900">
@@ -466,50 +518,8 @@ function SellerDashboardContent() {
             </Link>
             
             <div className="flex items-center space-x-4">
-              {/* Single Wallet Button */}
+              {/* Wallet Button */}
               <WalletButton />
-              
-              {connected && (
-                <>
-                  <select
-                    value={selectedListing?.id || ''}
-                    onChange={(e) => {
-                      const listing = listings.find(l => l.id === e.target.value);
-                      setSelectedListing(listing || null);
-                    }}
-                    className="px-4 py-2 bg-gray-700/50 text-white rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="">Select a listing</option>
-                    {listings.map((listing) => (
-                      <option key={listing.id} value={listing.id}>
-                        {listing.title} - {listing.sellerWalletAddress.substring(0, 6)}...{listing.sellerWalletAddress.substring(listing.sellerWalletAddress.length - 4)}
-                      </option>
-                    ))}
-                  </select>
-
-                  <button
-                    onClick={handleCreateTokenAccount}
-                    disabled={creatingTokenAccount || !selectedListing}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${
-                      creatingTokenAccount || !selectedListing
-                        ? 'bg-gray-600/20 text-gray-300 cursor-not-allowed'
-                        : 'bg-green-600/20 text-green-300 hover:bg-green-600/40'
-                    }`}
-                  >
-                    {creatingTokenAccount ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        <span>Creating Token Account...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Wallet className="w-5 h-5" />
-                        <span>Create Token Account</span>
-                      </>
-                    )}
-                  </button>
-                </>
-              )}
 
               <button
                 onClick={() => {
@@ -536,6 +546,9 @@ function SellerDashboardContent() {
           </div>
         )}
         
+        {/* Blockchain Status Message */}
+        {renderBlockchainStatus()}
+        
         {/* Wallet Connection Banner (only shown when not connected) */}
         {!connected && (
           <div className="bg-blue-500/10 border-l-4 border-blue-500 text-blue-300 p-4 mb-6 flex justify-between items-center">
@@ -543,7 +556,6 @@ function SellerDashboardContent() {
               <p className="font-semibold text-lg">Connect Your Wallet</p>
               <p className="text-sm">You need to connect your wallet to create and manage listings.</p>
             </div>
-            {/* Removed duplicate wallet button here */}
           </div>
         )}
 
@@ -603,7 +615,8 @@ function SellerDashboardContent() {
                     <button
                       onClick={() => handleInitializeOnChain(listing)}
                       className="p-2 text-purple-400 hover:bg-purple-400/10 rounded"
-                      disabled={processingAction}
+                      disabled={processingAction || initializedListings[listing.id]}
+                      title={initializedListings[listing.id] ? "Already initialized on blockchain" : "Initialize on blockchain"}
                     >
                       <BarChart4 className="w-4 h-4" />
                     </button>
@@ -634,7 +647,7 @@ function SellerDashboardContent() {
                   {/* Show wallet address if available */}
                   {listing.sellerWalletAddress && (
                     <div className="mt-1 text-xs text-gray-400 truncate">
-                      Wallet: {listing.sellerWalletAddress.substring(0, 6)}...{listing.sellerWalletAddress.substring(listing.sellerWalletAddress.length - 4)}
+                      Wallet: {formatAddress(listing.sellerWalletAddress, 6, 4)}
                     </div>
                   )}
                 </div>
@@ -687,6 +700,9 @@ function SellerDashboardContent() {
                             Connected
                           </span>
                         </div>
+                        <p className="text-gray-400 text-sm mt-1">
+                          This wallet will receive payments for energy sold. A token account will be automatically created if needed.
+                        </p>
                       </div>
                     ) : (
                       <div className="flex flex-col">
@@ -695,15 +711,15 @@ function SellerDashboardContent() {
                           name="sellerWalletAddress"
                           value={formData.sellerWalletAddress}
                           onChange={handleChange}
-                          placeholder="Enter your Solana wallet address"
+                          placeholder="Connect your wallet to continue"
                           className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600"
+                          disabled={true}
                         />
                         <div className="mt-2">
                           <WalletButton />
                         </div>
                       </div>
                     )}
-                    <p className="text-gray-400 text-sm mt-1">This wallet will receive payments for energy sold.</p>
                   </div>
 
                   <div className="col-span-2">
@@ -735,7 +751,7 @@ function SellerDashboardContent() {
                       name="energyType"
                       value={formData.energyType}
                       onChange={handleChange}
-                      className="mt-1w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
+                      className="mt-1 w-full rounded-md bg-gray-700/50 border-gray-600 text-white px-3 py-2"
                       required
                     >
                       {Object.values(EnergyType).map(type => (
@@ -759,7 +775,7 @@ function SellerDashboardContent() {
                     </select>
                   </div>
 
-                  <div>
+                  <div> 
                     <label className="block text-sm font-medium text-gray-300">Location</label>
                     <input
                       type="text"
@@ -770,7 +786,6 @@ function SellerDashboardContent() {
                       required
                     />
                   </div>
-
                   <div>
                     <label className="block text-sm font-medium text-gray-300">State</label>
                     <input
@@ -922,6 +937,12 @@ function SellerDashboardContent() {
                   </div>
                 </div>
 
+                {/* Form note about blockchain interaction */}
+                <div className="bg-blue-500/10 border-l-4 border-blue-500 text-blue-300 p-4 text-sm">
+                  <p><strong>Note:</strong> Creating or updating a listing will initialize it on the Solana blockchain. 
+                  This will automatically set up your token account to receive BIJLEE tokens when your energy is purchased.</p>
+                </div>
+
                 {/* Action Buttons */}
                 <div className="flex justify-end space-x-4">
                   <button
@@ -938,9 +959,9 @@ function SellerDashboardContent() {
                   </button>
                   <button
                     type="submit"
-                    disabled={processingAction}
+                    disabled={processingAction || !connected}
                     className={`px-4 py-2 rounded-lg transition-colors ${
-                      processingAction
+                      processingAction || !connected
                         ? 'bg-blue-700/50 text-blue-300 cursor-not-allowed'
                         : 'bg-blue-600 text-white hover:bg-blue-700'
                     }`}

@@ -5,6 +5,9 @@ import * as anchor from '@project-serum/anchor';
 import { Program, Idl } from '@project-serum/anchor';
 import { BN } from 'bn.js';
 import { WalletContextState } from '@solana/wallet-adapter-react';
+import { Wallet } from './wallet-helper';
+import { WalletAdapter } from '@solana/wallet-adapter-base';
+
 // Constants
 const BIJLEE_PROGRAM_ID = new PublicKey(process.env.NEXT_PUBLIC_BIJLEE_PROGRAM_ID || "71p7sfU3FKyP2hv9aVqZV1ha6ZzJ2VkReNjsGDoqtdRQ");
 const BIJLEE_TOKEN_MINT = new PublicKey(process.env.NEXT_PUBLIC_BIJLEE_TOKEN_MINT || "HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86");
@@ -479,12 +482,6 @@ const BIJLEE_IDL: Idl = {
 };
 
 // Types for function parameters
-export interface WalletAdapter {
-  publicKey: PublicKey | null;
-  signTransaction: (transaction: Transaction) => Promise<Transaction>;
-  signAllTransactions: (transactions: Transaction[]) => Promise<Transaction[]>;
-}
-
 export interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -838,92 +835,171 @@ export async function cancelTransaction(
   }
 }
 
-// Create a token account for sellers
-export async function createSellerTokenAccount(
-  wallet: WalletAdapter,
-  connection: Connection,
-  sellerWalletAddress: string
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    if (!wallet || !wallet.publicKey) {
-      throw new Error('Wallet not connected');
-    }
+// Initialize a listing on the Solana blockchain with automatic token account creation
+// export async function initializeListingOnChain(
+//   wallet: WalletAdapter,
+//   connection: Connection,
+//   listingId: string,
+//   pricePerUnit: number,
+//   availableUnits: number,
+//   minPurchase = 1,
+//   maxPurchase?: number
+// ): Promise<ApiResponse<{ listingAccount: string; sellerAddress: string }>> {
+//   try {
+//     if (!wallet || !wallet.publicKey) {
+//       throw new Error("Wallet not connected");
+//     }
 
-    // Validate seller wallet address
-    let sellerPublicKey: PublicKey;
-    try {
-      sellerPublicKey = new PublicKey(sellerWalletAddress);
-    } catch (error) {
-      throw new Error(`Invalid seller address: ${error instanceof Error ? error.message : 'Invalid public key'}`);
-    }
-
-    // Get the seller's token account address
-    const sellerTokenAccount = await getAssociatedTokenAddress(
-      BIJLEE_TOKEN_MINT,
-      sellerPublicKey
-    );
-
-    // Check if the token account already exists
-    try {
-      await connection.getTokenAccountBalance(sellerTokenAccount);
-      return { success: true }; // Token account already exists
-    } catch {
-      // Token account doesn't exist, proceed with creation
-    }
-
-    // Create the transaction
-    const transaction = new Transaction();
-
-    // Add the createAssociatedTokenAccount instruction
-    transaction.add(
-      createAssociatedTokenAccountInstruction(
-        wallet.publicKey, // payer
-        sellerTokenAccount, // ata
-        sellerPublicKey, // owner
-        BIJLEE_TOKEN_MINT // mint
-      )
-    );
-
-    // Get a recent blockhash with higher commitment level
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    transaction.recentBlockhash = blockhash;
-    transaction.feePayer = wallet.publicKey;
-
-    // Sign and send the transaction
-    const signedTx = await wallet.signTransaction(transaction);
-    const signature = await connection.sendRawTransaction(signedTx.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed'
-    });
+//     const seller = wallet.publicKey;
+//     const program = getProgram(connection, wallet);
     
-    // Use a more reliable confirmation strategy
-    const confirmation = await connection.confirmTransaction({
-      blockhash,
-      lastValidBlockHeight,
-      signature
-    }, 'confirmed');
+//     // Set maxPurchase to availableUnits if not provided
+//     if (maxPurchase === undefined) {
+//       maxPurchase = availableUnits;
+//     }
     
-    if (confirmation.value.err) {
-      throw new Error(`Transaction failed: ${confirmation.value.err.toString()}`);
-    }
+//     // Calculate PDA for listing account
+//     const [listingAccount] = await PublicKey.findProgramAddress(
+//       [
+//         Buffer.from('listing'),
+//         seller.toBuffer(),
+//         Buffer.from(listingId),
+//       ],
+//       program.programId
+//     );
+    
+//     console.log('Initializing listing with params:', {
+//       listingId,
+//       seller: seller.toString(),
+//       pricePerUnit,
+//       availableUnits,
+//       minPurchase,
+//       maxPurchase
+//     });
+    
+//     // Convert price to lamports (9 decimal places)
+//     const price = new BN(pricePerUnit * 1_000_000_000);
+    
+//     // Calculate expiry timestamp (current time + 90 days)
+//     const expiryTimestamp = new BN(
+//       Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60)
+//     );
 
-    return { success: true };
-  } catch (error) {
-    console.error('Error creating seller token account:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error creating token account'
-    };
-  }
-}
-
-// Initialize a listing on the Solana blockchain
+//     // Create a transaction for the listing initialization
+//     const transaction = new Transaction();
+    
+//     // Check if seller has a token account and create one if needed
+//     try {
+//       // Calculate the seller's token account address
+//       const sellerTokenAccount = await getAssociatedTokenAddress(
+//         BIJLEE_TOKEN_MINT,
+//         seller
+//       );
+      
+//       console.log('Checking if seller token account exists:', sellerTokenAccount.toString());
+      
+//       // Check if the token account exists
+//       const tokenAccountInfo = await connection.getAccountInfo(sellerTokenAccount);
+      
+//       if (!tokenAccountInfo) {
+//         console.log('Seller token account does not exist. Adding instruction to create it...');
+        
+//         // Add instruction to create the token account
+//         transaction.add(
+//           createAssociatedTokenAccountInstruction(
+//             seller, // payer
+//             sellerTokenAccount, // associated token account to create
+//             seller, // owner
+//             BIJLEE_TOKEN_MINT // token mint
+//           )
+//         );
+        
+//         console.log('Token account creation instruction added to transaction');
+//       } else {
+//         console.log('Seller token account already exists');
+//       }
+//     } catch (error) {
+//       console.error('Error checking/creating token account:', error);
+//       // Continue with listing creation even if token account check fails
+//       // The transaction might still succeed if token account exists
+//     }
+    
+//     try {
+//       // Get the listing initialization instruction
+//       const initListingIx = await program.methods
+//         .initializeListing(
+//           listingId,
+//           price,
+//           new BN(availableUnits), // totalUnits
+//           new BN(availableUnits), // availableUnits
+//           new BN(minPurchase),
+//           new BN(maxPurchase),
+//           expiryTimestamp
+//         )
+//         .accounts({
+//           seller,
+//           listing: listingAccount,
+//           systemProgram: SystemProgram.programId,
+//         })
+//         .instruction();
+      
+//       // Add the listing initialization instruction to the transaction
+//       transaction.add(initListingIx);
+      
+//       // Get recent blockhash for transaction
+//       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+//       transaction.recentBlockhash = blockhash;
+//       transaction.feePayer = seller;
+      
+//       // Sign and send the transaction
+//       console.log('Signing and sending transaction...');
+//       const signedTx = await wallet.signTransaction(transaction);
+//       const signature = await connection.sendRawTransaction(signedTx.serialize(), {
+//         skipPreflight: false,
+//         preflightCommitment: 'confirmed'
+//       });
+      
+//       // Confirm transaction
+//       const confirmation = await connection.confirmTransaction({
+//         blockhash,
+//         lastValidBlockHeight,
+//         signature
+//       }, 'confirmed');
+      
+//       if (confirmation.value.err) {
+//         throw new Error(`Transaction failed: ${confirmation.value.err.toString()}`);
+//       }
+      
+//       console.log('Transaction successful! Signature:', signature);
+      
+//       return {
+//         success: true,
+//         data: { 
+//           listingAccount: listingAccount.toString(),
+//           sellerAddress: seller.toString() // Return the seller address used
+//         },
+//         tx: signature
+//       };
+//     } catch (error) {
+//       console.error('Error initializing listing on-chain:', error);
+//       throw new Error('Failed to initialize listing on blockchain: ' + (error instanceof Error ? error.message : String(error)));
+//     }
+//   } catch (error) {
+//     console.error('Error in initializeListingOnChain:', error);
+//     return {
+//       success: false,
+//       error: error instanceof Error ? error.message : 'Unknown error initializing listing'
+//     };
+//   }
+// }
 export async function initializeListingOnChain(
   wallet: WalletAdapter,
   connection: Connection,
   listingId: string,
   pricePerUnit: number,
-  availableUnits: number
+  availableUnits: number,
+  minPurchase = 1,
+  maxPurchase?: number
 ): Promise<ApiResponse<{ listingAccount: string; sellerAddress: string }>> {
   try {
     if (!wallet || !wallet.publicKey) {
@@ -932,6 +1008,11 @@ export async function initializeListingOnChain(
 
     const seller = wallet.publicKey;
     const program = getProgram(connection, wallet);
+    
+    // Set maxPurchase to availableUnits if not provided
+    if (maxPurchase === undefined) {
+      maxPurchase = availableUnits;
+    }
     
     // Calculate PDA for listing account
     const [listingAccount] = await PublicKey.findProgramAddress(
@@ -943,48 +1024,123 @@ export async function initializeListingOnChain(
       program.programId
     );
     
-    console.log('Initializing listing account:', listingAccount.toString());
-    console.log('Seller (connected wallet):', seller.toString());
-    console.log('Listing ID:', listingId);
-    console.log('Price per unit:', pricePerUnit);
-    console.log('Available units:', availableUnits);
+    console.log('Initializing listing with params:', {
+      listingId,
+      seller: seller.toString(),
+      pricePerUnit,
+      availableUnits,
+      minPurchase,
+      maxPurchase
+    });
     
     // Convert price to lamports (9 decimal places)
     const price = new BN(pricePerUnit * 1_000_000_000);
     
-    // Initialize the listing on-chain
+    // Calculate expiry timestamp (current time + 90 days)
+    const expiryTimestamp = new BN(
+      Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60)
+    );
+
+    // Create a transaction for the listing initialization
+    const transaction = new Transaction();
+    
+    // Check if seller has a token account and create one if needed
     try {
-      const tx = await program.methods
+      // Calculate the seller's token account address
+      const sellerTokenAccount = await getAssociatedTokenAddress(
+        BIJLEE_TOKEN_MINT,
+        seller
+      );
+      
+      console.log('Checking if seller token account exists:', sellerTokenAccount.toString());
+      
+      // Check if the token account exists
+      const tokenAccountInfo = await connection.getAccountInfo(sellerTokenAccount);
+      
+      if (!tokenAccountInfo) {
+        console.log('Seller token account does not exist. Adding instruction to create it...');
+        
+        // Add instruction to create the token account
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            seller, // payer
+            sellerTokenAccount, // associated token account to create
+            seller, // owner
+            BIJLEE_TOKEN_MINT // token mint
+          )
+        );
+        
+        console.log('Token account creation instruction added to transaction');
+      } else {
+        console.log('Seller token account already exists');
+      }
+    } catch (error) {
+      console.error('Error checking/creating token account:', error);
+      // Continue with listing creation even if token account check fails
+      // The transaction might still succeed if token account exists
+    }
+    
+    try {
+      // Get the listing initialization instruction
+      const initListingIx = await program.methods
         .initializeListing(
+          listingId,
           price,
-          new BN(availableUnits)
+          new BN(availableUnits), // totalUnits
+          new BN(availableUnits), // availableUnits
+          new BN(minPurchase),
+          new BN(maxPurchase),
+          expiryTimestamp
         )
         .accounts({
           seller,
           listing: listingAccount,
-          systemProgram: anchor.web3.SystemProgram.programId,
+          systemProgram: SystemProgram.programId,
         })
-        .rpc();
+        .instruction();
       
-      console.log('Listing initialized on-chain. Transaction signature:', tx);
+      // Add the listing initialization instruction to the transaction
+      transaction.add(initListingIx);
+      
+      // Get recent blockhash for transaction
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = seller;
+      
+      // Sign and send the transaction
+      console.log('Signing and sending transaction...');
+      
+      // Use the correct signature for sendTransaction with connection parameter
+      const signature = await wallet.sendTransaction(transaction, connection);
+      
+      // Wait for transaction confirmation
+      const confirmationResult = await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight
+      });
+      
+      console.log('Transaction confirmed:', signature);
       
       return {
         success: true,
-        data: { 
+        data: {
           listingAccount: listingAccount.toString(),
-          sellerAddress: seller.toString() // Return the seller address used
-        },
-        tx
+          sellerAddress: seller.toString()
+        }
       };
     } catch (error) {
-      console.error('Error initializing listing on-chain:', error);
-      throw new Error('Failed to initialize listing on blockchain: ' + (error instanceof Error ? error.message : String(error)));
+      console.error('Error initializing listing on chain:', error);
+      return {
+        success: false,
+        error: `Failed to initialize listing on chain: ${error}`
+      };
     }
   } catch (error) {
     console.error('Error in initializeListingOnChain:', error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error initializing listing'
+      error: `Error initializing listing: ${error}`
     };
   }
 }
