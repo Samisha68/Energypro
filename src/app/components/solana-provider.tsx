@@ -1,53 +1,39 @@
-'use client'
+'use client';
 
-import dynamic from 'next/dynamic'
-import { AnchorProvider } from '@coral-xyz/anchor'
-import { WalletError } from '@solana/wallet-adapter-base'
+import { FC, ReactNode, useMemo } from 'react';
 import {
-  AnchorWallet,
-  useConnection,
-  useWallet,
   ConnectionProvider,
-  WalletProvider,
-} from '@solana/wallet-adapter-react'
-import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
-import { ReactNode, useCallback, useMemo } from 'react'
-import { useCluster } from '../components/cluster/cluster-data-access'
+  WalletProvider as SolanaWalletProvider,
+} from '@solana/wallet-adapter-react';
+import {
+  WalletModalProvider,
+  WalletMultiButton,
+} from '@solana/wallet-adapter-react-ui';
+import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
+import { clusterApiUrl } from '@solana/web3.js';
 
-require('@solana/wallet-adapter-react-ui/styles.css')
+import '@solana/wallet-adapter-react-ui/styles.css';
 
-export const WalletButton = dynamic(async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton, {
-  ssr: false,
-})
+export const SolanaProvider: FC<{ children: ReactNode }> = ({ children }) => {
+  const network = 'devnet';
 
-export function SolanaProvider({ children }: { children: ReactNode }) {
-  const { cluster } = useCluster()
-  const endpoint = useMemo(() => {
-    // Check if cluster exists and has a valid endpoint
-    if (cluster && cluster.endpoint && 
-        (cluster.endpoint.startsWith('http:') || cluster.endpoint.startsWith('https:'))) {
-      return cluster.endpoint;
-    }
-    // Return a default Solana devnet endpoint if none is available
-    return 'https://api.devnet.solana.com';
-  }, [cluster])
-  
-  const onError = useCallback((error: WalletError) => {
-    console.error(error)
-  }, [])
+  const endpoint = useMemo(() => clusterApiUrl(network), [network]);
+
+  const wallets = useMemo(
+    () => [new PhantomWalletAdapter()],
+    []
+  );
 
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={[]} onError={onError} autoConnect={true}>
-        <WalletModalProvider>{children}</WalletModalProvider>
-      </WalletProvider>
+      <SolanaWalletProvider wallets={wallets} autoConnect>
+        <WalletModalProvider>
+          {children}
+        </WalletModalProvider>
+      </SolanaWalletProvider>
     </ConnectionProvider>
-  )
-}
+  );
+};
 
-export function useAnchorProvider() {
-  const { connection } = useConnection()
-  const wallet = useWallet()
-
-  return new AnchorProvider(connection, wallet as AnchorWallet, { commitment: 'confirmed' })
-}
+// 👇 This makes the WalletButton usable in any component like <WalletButton />
+export { WalletMultiButton as WalletButton };

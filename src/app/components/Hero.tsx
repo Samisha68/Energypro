@@ -60,7 +60,7 @@ export default function Hero() {
               className="rounded-md shadow"
             >
               <a
-                href="/role-selection"
+                href="/auth"
                 className="w-full flex items-center justify-center px-8 py-4 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-500 focus:ring-4 focus:ring-blue-300 focus:outline-none md:py-5 md:text-lg md:px-12"
               >
                 Get Started
