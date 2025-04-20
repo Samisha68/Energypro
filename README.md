@@ -86,8 +86,9 @@ For other platforms, ensure you set up the following:
 
 The platform uses a Solana smart contract for secure energy trading:
 
-- **Program ID**: 71p7sfU3FKyP2hv9aVqZV1ha6ZzJ2VkReNjsGDoqtdRQ
-- **Token Mint**: HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86
+- **Program ID**: You can easily generate your own
+- **Token Mint**: BIJLEE/ ANY TOKEN
+  
 
 ## License
 
