@@ -4,29 +4,30 @@ import { SessionProvider, useSession, signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from 'next/dynamic';
-import { 
-  useWallet, 
-} from '@solana/wallet-adapter-react';
-import { SolanaProvider} from '@/app/components/solana-provider';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { SolanaProvider } from '@/app/components/solana-provider';
 
-import { PublicKey } from '@solana/web3.js';
-import { 
-  
-  getAssociatedTokenAddress 
-} from "@solana/spl-token";
-import { Program, AnchorProvider, web3, Wallet } from '@project-serum/anchor';
-import { useAnchorWallet } from '@solana/wallet-adapter-react';
-import { Connection } from '@solana/web3.js';
+import { PublicKey, Connection, SystemProgram } from '@solana/web3.js';
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { Program, AnchorProvider, Wallet, Idl } from '@project-serum/anchor';
 import BN from 'bn.js';
-import idl from '@/app/lib/idl/bijlee_transaction.json';
+import idlJson from "@/app/lib/idl/energy_trading.json";
 
-// Dynamically import the wallet button to avoid SSR issues
+// Cast the imported JSON to the Idl type
+const idl: Idl = idlJson as unknown as Idl;
+
 const WalletButton = dynamic(
   () => import('@/app/components/solana-provider').then(mod => mod.WalletButton),
   { ssr: false }
 );
 
-// Define TypeScript interfaces
+const PAYMENT_RECEIVER = new PublicKey("5PL4kXp3Ezz9uzn9jtLtjQfndKRNoQtgGPccM2kvvRad");
+const BIJLEE_TOKEN_MINT = new PublicKey(
+  process.env.NEXT_PUBLIC_BIJLEE_TOKEN_MINT || 
+  // Use the correct Bijlee token
+  "HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86"
+);
+
 interface Listing {
   _id: string;
   sellerId: string;
@@ -51,14 +52,15 @@ interface Purchase {
   status: string;
 }
 
-
-const PAYMENT_RECEIVER = new PublicKey("5PL4kXp3Ezz9uzn9jtLtjQfndKRNoQtgGPccM2kvvRad");
-const BIJLEE_TOKEN_MINT = new PublicKey(
-  process.env.NEXT_PUBLIC_BIJLEE_TOKEN_MINT || 
-  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" // Default to USDC for development
-);
-
-
+export default function Dashboard() {
+  return (
+    <SessionProvider>
+      <SolanaProvider>
+        <DashboardContent />
+      </SolanaProvider>
+    </SessionProvider>
+  );
+}
 
 function DashboardContent() {
   const { data: session, status } = useSession();
@@ -68,134 +70,296 @@ function DashboardContent() {
   const [purchaseHistory, setPurchaseHistory] = useState<Purchase[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const router = useRouter();
-  
-  // Solana wallet connection
+
   const wallet = useWallet();
   const connected = !!wallet.publicKey;
 
-  // Add global styles to fix the wallet button
   useEffect(() => {
-    // Add a style tag to the document head
     const styleTag = document.createElement('style');
-    styleTag.innerHTML = `
-      .wallet-adapter-button {
-        height: auto !important;
-        padding: 8px 12px !important;
-        font-size: 14px !important;
-        max-width: 200px !important;
-      }
-    `;
+    styleTag.innerHTML = `.wallet-adapter-button { height: auto !important; padding: 8px 12px !important; font-size: 14px !important; max-width: 200px !important; }`;
     document.head.appendChild(styleTag);
-    
-    // Clean up when component unmounts
     return () => {
-      document.head.removeChild(styleTag);
+      if (document.head.contains(styleTag)) {
+        document.head.removeChild(styleTag);
+      }
     };
   }, []);
 
-  // Fetch listings from the database
   useEffect(() => {
-    if (status === "authenticated") {
-      fetchListings();
-    }
+    if (status === "authenticated") fetchListings();
   }, [status]);
 
   const fetchListings = async () => {
     try {
       setIsLoading(true);
-      console.log("Fetching listings...");
       const response = await fetch("/api/listings");
-      
-      if (!response.ok) {
-        console.error("Response not OK:", response.status, response.statusText);
-        throw new Error("Failed to fetch listings");
-      }
-      
       const data = await response.json();
-      console.log("API Response:", data);
-      
-      if (data?.listings) {
-        console.log("Setting listings:", data.listings);
-        setListings(data.listings);
-      } else {
-        console.log("No listings in response");
-        setListings([]);
-      }
+      setListings(data?.listings || []);
     } catch (err) {
-      console.error("Error fetching listings:", err);
       setError("Failed to load energy listings. Please try again later.");
-      setListings([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // SIMPLIFIED transaction function that avoids BN completely
-  const executeTransaction = async (listingId: string, amount: number, pricePerUnit: number) => {
-    if (!wallet.publicKey || !wallet.signTransaction) {
-      setError("Wallet not connected or doesn't support signing");
-      return null;
+  const executeTransaction = async (listingId: string, units: number, pricePerUnit: number) => {
+    if (!wallet || !wallet.publicKey) {
+      throw new Error('Wallet not connected');
     }
 
     try {
-      console.log("Preparing to execute transaction...");
-      
-      // Calculate the total payment amount
-      const totalAmount = amount * pricePerUnit;
-      console.log(`Total payment amount: ${totalAmount} Bijlee tokens`);
-      
-      // Get the buyer's token account
-      const buyerTokenAccount = await getAssociatedTokenAddress(
-        BIJLEE_TOKEN_MINT,
-        wallet.publicKey
-      );
-      console.log(`Buyer's token account: ${buyerTokenAccount.toString()}`);
-      
-      // Get the seller's token account
-      const sellerTokenAccount = await getAssociatedTokenAddress(
-        BIJLEE_TOKEN_MINT,
-        PAYMENT_RECEIVER
-      );
-      console.log(`Seller's token account: ${sellerTokenAccount.toString()}`);
-
-      // Create connection and provider
       const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com");
+      
+      // Create Anchor wallet from Solana wallet adapter
       const anchorWallet = {
         publicKey: wallet.publicKey,
-        signTransaction: wallet.signTransaction,
-        signAllTransactions: wallet.signAllTransactions || (async (txs) => txs),
+        // Ensure signTransaction is always defined
+        signTransaction: wallet.signTransaction ? wallet.signTransaction : (tx) => {
+            console.error("Attempted to use signTransaction, but the connected wallet does not support it.");
+            return Promise.reject(new Error("signTransaction is not supported by this wallet."));
+        },
+        // Ensure signAllTransactions is always defined, providing a compliant fallback
+        signAllTransactions: wallet.signAllTransactions ? wallet.signAllTransactions : (txs) => {
+            console.error("Attempted to use signAllTransactions, but the connected wallet does not support it.");
+            // Provide a basic fallback that rejects, as Anchor might expect this method.
+            // A more robust fallback could loop and call signTransaction if available.
+            return Promise.reject(new Error("signAllTransactions is not supported by this wallet."));
+        },
       } as Wallet;
-      const provider = new AnchorProvider(connection, anchorWallet, {});
-      
-      // Initialize the program
-      const program = new Program(idl as any, new PublicKey("71p7sfU3FKyP2hv9aVqZV1ha6ZzJ2VkReNjsGDoqtdRQ"), provider);
 
-      // Create the transaction
+      const provider = new AnchorProvider(connection, anchorWallet, {
+        commitment: 'confirmed',
+      });
+
+      // Initialize the program using the strictly typed IDL
+      // Check if address exists at root level or in metadata
+      let programAddress;
+      if ((idl as any).address) {
+        programAddress = new PublicKey((idl as any).address);
+      } else if (idl.metadata && (idl.metadata as any).address) {
+        programAddress = new PublicKey((idl.metadata as any).address);
+      } else {
+        throw new Error('Program address not found in IDL');
+      }
+      
+      console.log("Program Address:", programAddress.toBase58());
+      const program = new Program(idl, programAddress, provider);
+
+      // Before creating PublicKey instances
+      console.log("BIJLEE_TOKEN_MINT:", BIJLEE_TOKEN_MINT.toBase58());
+      console.log("PAYMENT_RECEIVER:", PAYMENT_RECEIVER.toBase58());
+      console.log("Wallet PublicKey:", wallet.publicKey?.toBase58());
+
+      // Get token accounts
+      const buyerTokenAccount = await getAssociatedTokenAddress(
+        new PublicKey(BIJLEE_TOKEN_MINT),
+        wallet.publicKey
+      );
+
+      const sellerTokenAccount = await getAssociatedTokenAddress(
+        new PublicKey(BIJLEE_TOKEN_MINT),
+        new PublicKey(PAYMENT_RECEIVER)
+      );
+
+      // Derive the transaction PDA
+      const [transactionPda, transactionBump] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("transaction"),
+          anchorWallet.publicKey.toBuffer(),
+          Buffer.from(listingId)
+        ],
+        program.programId
+      );
+
+      // --- DEBUG LOGGING START ---
+      console.log("--- Transaction Data ---");
+      console.log("Listing ID:", listingId);
+      console.log("Units (BN):", units.toString());
+      console.log("Price Per Unit (BN):", pricePerUnit.toString());
+      console.log("Buyer Pubkey:", anchorWallet.publicKey.toBase58());
+      console.log("Buyer Token Acc:", buyerTokenAccount.toBase58());
+      console.log("Seller Pubkey:", PAYMENT_RECEIVER.toBase58());
+      console.log("Seller Token Acc:", sellerTokenAccount.toBase58());
+      console.log("Transaction PDA:", transactionPda.toBase58());
+      console.log("Token Program:", TOKEN_PROGRAM_ID.toBase58());
+      console.log("System Program:", SystemProgram.programId.toBase58());
+      console.log("--- End Transaction Data ---");
+      // --- DEBUG LOGGING END ---
+
+      // Ensure pricePerUnit is an integer for BN
+      const pricePerUnitInt = Math.floor(pricePerUnit);
+      console.log("Using Integer Price Per Unit:", pricePerUnitInt); // Add log for verification
+
+      // Before creating BN instances
+      console.log("Units before BN:", units);
+      console.log("Price Per Unit Int before BN:", pricePerUnitInt);
+
+      // Convert the MongoDB ObjectId to a more compact representation
+      // This helps avoid buffer size issues during encoding
+      const listingIdHash = Array.from(Buffer.from(listingId)).reduce(
+        (hash, byte) => (hash * 31 + byte) % 0xFFFFFFFF, 0
+      );
+      console.log("Using hash of listing ID:", listingIdHash);
+
+      // Let's try a direct token transfer instead of using the smart contract
+      // since we're having persistent encoding issues
+      console.log("SIMPLIFIED: Direct token transfer");
+      
+      try {
+        // Calculate total amount in lamports (smallest unit)
+        const totalAmount = units * pricePerUnitInt;
+        console.log("Total amount to transfer:", totalAmount);
+        
+        // Import all necessary SPL Token functions
+        const { 
+          getOrCreateAssociatedTokenAccount,
+          getAssociatedTokenAddress,
+          createAssociatedTokenAccountInstruction,
+          createTransferInstruction,
+          getAccount,
+          transfer 
+        } = await import('@solana/spl-token');
+        
+        // Import necessary web3 classes
+        const { Transaction } = await import('@solana/web3.js');
+        
+        // Create a transaction to handle account creation and transfer
+        const transaction = new Transaction();
+        
+        console.log("Checking if buyer token account exists...");
+        // Check if buyer account exists
+        const buyerTokenAddress = await getAssociatedTokenAddress(
+          BIJLEE_TOKEN_MINT,
+          wallet.publicKey
+        );
+        
+        let buyerAccountExists = true;
+        try {
+          await getAccount(connection, buyerTokenAddress);
+          console.log("Buyer token account exists:", buyerTokenAddress.toBase58());
+        } catch (e) {
+          console.log("Buyer token account doesn't exist, will create it");
+          buyerAccountExists = false;
+          // Add instruction to create buyer token account
+          transaction.add(
+            createAssociatedTokenAccountInstruction(
+              wallet.publicKey, // payer
+              buyerTokenAddress, // associated token account
+              wallet.publicKey, // owner
+              BIJLEE_TOKEN_MINT // mint
+            )
+          );
+        }
+        
+        console.log("Checking if seller token account exists...");
+        // Check if seller account exists
+        const sellerTokenAddress = await getAssociatedTokenAddress(
+          BIJLEE_TOKEN_MINT,
+          PAYMENT_RECEIVER
+        );
+        
+        let sellerAccountExists = true;
+        try {
+          await getAccount(connection, sellerTokenAddress);
+          console.log("Seller token account exists:", sellerTokenAddress.toBase58());
+        } catch (e) {
+          console.log("Seller token account doesn't exist, will create it");
+          sellerAccountExists = false;
+          // Add instruction to create seller token account
+          transaction.add(
+            createAssociatedTokenAccountInstruction(
+              wallet.publicKey, // payer
+              sellerTokenAddress, // associated token account
+              PAYMENT_RECEIVER, // owner
+              BIJLEE_TOKEN_MINT // mint
+            )
+          );
+        }
+        
+        // Add transfer instruction if both accounts exist or will be created
+        console.log("Adding transfer instruction");
+        transaction.add(
+          createTransferInstruction(
+            buyerTokenAddress, // source
+            sellerTokenAddress, // destination
+            wallet.publicKey, // owner
+            totalAmount // amount
+          )
+        );
+        
+        // Set recent blockhash and fee payer
+        transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+        transaction.feePayer = wallet.publicKey;
+        
+        // Sign transaction
+        if (!wallet.signTransaction) {
+          throw new Error("Wallet does not support signTransaction");
+        }
+        
+        console.log("Signing transaction...");
+        const signedTransaction = await wallet.signTransaction(transaction);
+        
+        // Send transaction
+        console.log("Sending transaction...");
+        const txid = await connection.sendRawTransaction(signedTransaction.serialize());
+        console.log("Transaction sent:", txid);
+        
+        // Confirm transaction
+        console.log("Confirming transaction...");
+        const confirmation = await connection.confirmTransaction(txid);
+        if (confirmation.value.err) {
+          throw new Error("Transaction failed: " + JSON.stringify(confirmation.value.err));
+        }
+        
+        console.log("Transaction confirmed successfully!");
+        return txid;
+      } catch (directError) {
+        console.error('Direct transfer failed:', directError);
+        throw directError;
+      }
+
+      // ----- Original smart contract approach (commented out) -----
+      /*
       const tx = await program.methods
-        .processPurchase(new BN(amount))
+        .processPurchase(
+          listingId,
+          new BN(units),
+          new BN(pricePerUnitInt)
+        )
         .accounts({
-          buyer: wallet.publicKey,
-          buyerTokenAccount,
-          sellerTokenAccount,
-          seller: PAYMENT_RECEIVER,
-          tokenProgram: web3.SystemProgram.programId,
+          buyer: anchorWallet.publicKey,
+          transaction: transactionPda,
+          buyer_token_account: buyerTokenAccount,
+          seller: new PublicKey(PAYMENT_RECEIVER),
+          seller_token_account: sellerTokenAccount,
+          token_program: TOKEN_PROGRAM_ID,
+          system_program: SystemProgram.programId,
         })
         .rpc();
 
-      console.log("Transaction confirmed:", tx);
-      return tx;
+      console.log('Transaction sent:', tx);
 
+      // Wait for confirmation
+      const confirmation = await connection.confirmTransaction(tx);
+      if (confirmation.value.err) {
+        throw new Error('Transaction failed');
+      }
+
+      console.log('Transaction confirmed');
+      return tx;
+      */
     } catch (error) {
-      console.error("Transaction execution error:", error);
+      // Log the error without trying to process it
+      console.error('Transaction execution error:', error);
       throw error;
     }
   };
 
-  // Process purchase function with Solana smart contract
   const handlePurchase = async (listingId: string) => {
-    // Check if wallet is connected
-    if (!connected) {
+    if (!wallet.publicKey) {
       setError("Please connect your wallet first");
       return;
     }
@@ -207,7 +371,10 @@ function DashboardContent() {
     }
 
     const listing = listings.find(l => l._id === listingId);
-    if (!listing) return;
+    if (!listing) {
+      setError("Listing not found");
+      return;
+    }
 
     if (amount > listing.availableUnits) {
       setError(`Only ${listing.availableUnits} units available for purchase`);
@@ -218,30 +385,17 @@ function DashboardContent() {
     setError(null);
 
     try {
-      // First, execute the blockchain transaction
-      const transactionSignature = await executeTransaction(
-        listingId, 
-        amount, 
-        listing.pricePerUnit
-      );
+      const tx = await executeTransaction(listingId, amount, listing.pricePerUnit);
       
-      if (!transactionSignature) {
-        throw new Error("Failed to execute blockchain transaction");
-      }
-      
-      // After successful blockchain transaction, update our local state
-      // In a real app, you would also update the backend here
-      
-      // Update listings to reflect the purchase
-      setListings(listings.map(l => {
-        if (l._id === listingId) {
-          return { ...l, availableUnits: l.availableUnits - amount };
-        }
-        return l;
-      }));
-      
-      // Add to local purchase history
-      const purchase: Purchase = {
+      // Update listings
+      setListings(listings.map(l => 
+        l._id === listingId 
+          ? { ...l, availableUnits: l.availableUnits - amount } 
+          : l
+      ));
+
+      // Update purchase history
+      setPurchaseHistory([{
         id: Date.now().toString(),
         listingId,
         listingName: listing.name,
@@ -249,267 +403,183 @@ function DashboardContent() {
         pricePerUnit: listing.pricePerUnit,
         total: amount * listing.pricePerUnit,
         date: new Date().toISOString(),
-        transactionHash: transactionSignature,
+        transactionHash: tx,
         status: "completed"
-      };
-      
-      setPurchaseHistory([purchase, ...purchaseHistory]);
-      
-      // Reset purchase amount
-      setPurchaseAmount({...purchaseAmount, [listingId]: 0});
-      
-      // Show success message
-      alert("Purchase completed successfully!");
+      }, ...purchaseHistory]);
 
+      // Reset purchase amount
+      setPurchaseAmount({ ...purchaseAmount, [listingId]: 0 });
+
+      // Set success message
+      setSuccessMessage("Purchase completed successfully!");
+      
+      // Automatically show the purchase history
+      setShowHistory(true);
+      
+      // Clear success message after 5 seconds
+      setTimeout(() => {
+        setSuccessMessage(null);
+      }, 5000);
     } catch (error) {
-      console.error("Error processing purchase:", error);
-      setError(error instanceof Error ? error.message : "Failed to complete purchase. Please try again.");
+      const errorMessage = error instanceof Error ? error.message : "Failed to complete purchase";
+      setError(errorMessage);
     } finally {
       setProcessingPurchase(null);
     }
   };
 
-  const handleSignOut = () => {
-    signOut({ redirect: true, callbackUrl: "/auth" });
-  };
-
-  // If not authenticated, redirect to login
   if (status === "unauthenticated") {
     router.push("/auth");
     return null;
   }
 
-  // Show loading state
   if (status === "loading") {
-    return (
-      <div className="flex justify-center items-center min-h-screen bg-[#0f1422]">
-        <div className="w-12 h-12 border-t-2 border-blue-600 border-solid rounded-full animate-spin"></div>
-        <p className="ml-3 text-white">Loading...</p>
-      </div>
-    );
+    return <div className="flex justify-center items-center min-h-screen bg-[#0f1422]">
+      <div className="w-12 h-12 border-t-2 border-blue-600 border-solid rounded-full animate-spin"></div>
+      <p className="ml-3 text-white">Loading...</p>
+    </div>;
   }
 
   return (
     <div className="min-h-screen bg-[#0f1422] text-white">
-      {/* Top Navigation Bar */}
-      <div className="flex justify-between items-center px-6 py-4 bg-[#161b2b] border-b border-gray-800">
-        <div className="flex items-center space-x-3">
-          <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-          <h1 className="text-xl font-semibold">EnergyPro</h1>
-        </div>
-
-        {/* User Info & Sign Out */}
-        {session?.user && (
-          <div className="flex items-center space-x-3">
-            <div className="hidden md:flex items-center space-x-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white">
-                {session.user.name?.[0]?.toUpperCase() || session.user.email?.[0]?.toUpperCase() || "U"}
-              </div>
-              <span className="text-sm text-gray-300">{session.user.name || session.user.email}</span>
-            </div>
-            <button
-              onClick={handleSignOut}
-              className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm transition"
-            >
-              Sign Out
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Main Content */}
       <div className="px-6 py-8 max-w-7xl mx-auto">
         <h2 className="text-2xl font-bold mb-6">Energy Marketplace</h2>
-        
-        {/* Error Display */}
+
         {error && (
           <div className="bg-red-900/70 backdrop-blur-md p-4 rounded-lg border border-red-500/30 mb-6 text-white">
             {error}
           </div>
         )}
-        
-        {/* Solana Wallet Connection */}
+
+        {successMessage && (
+          <div className="bg-green-900/70 backdrop-blur-md p-4 rounded-lg border border-green-500/30 mb-6 text-white">
+            {successMessage}
+          </div>
+        )}
+
         <div className="bg-gray-900/70 backdrop-blur-md p-4 rounded-lg shadow-md border border-blue-500/20 mb-8">
-          <div className="flex flex-col sm:flex-row justify-between items-center">
+          <div className="flex justify-between items-center">
             <div>
-              <h3 className="text-lg font-semibold mb-1 text-white">Solana Wallet</h3>
-              <p className="text-sm text-gray-400">
-                Connect your Solana wallet to make energy purchases with Bijlee tokens
-              </p>
+              <h3 className="text-lg font-semibold text-white">Solana Wallet</h3>
+              <p className="text-sm text-gray-400">Connect your wallet to buy Bijlee energy units.</p>
             </div>
-            <div className="mt-3 sm:mt-0">
-              {/* Apply inline max-width constraint to the wallet button container */}
-              <div style={{ maxWidth: '200px' }}>
-                <WalletButton />
-              </div>
+            <div style={{ maxWidth: '200px' }}>
+              <WalletButton />
               {connected && (
-                <div className="mt-2 text-sm text-green-400 text-center">
+                <p className="mt-2 text-sm text-green-400 text-center">
                   <span className="inline-block w-2 h-2 bg-green-400 rounded-full mr-1"></span>
-                  Connected: {wallet.publicKey?.toString().slice(0, 6)}...{wallet.publicKey?.toString().slice(-4)}
-                </div>
+                  {wallet.publicKey?.toString().slice(0, 6)}...{wallet.publicKey?.toString().slice(-4)}
+                </p>
               )}
             </div>
           </div>
         </div>
-        
-        {/* Energy Listings */}
+
         {isLoading ? (
-          <div className="flex justify-center items-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-blue-500"></div>
-            <p className="ml-3 text-gray-300">Loading energy listings...</p>
-          </div>
-        ) : listings.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            {listings.map((listing) => (
-              <div key={listing._id} className="bg-gray-800/50 rounded-lg p-6 border border-gray-700/50">
-                <h3 className="text-xl font-semibold text-white mb-2">{listing.name}</h3>
-                <p className="text-gray-300 mb-3">
-                  {listing.location}
-                </p>
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-blue-400 font-medium">${listing.pricePerUnit.toFixed(2)} per unit</span>
-                </div>
-                
-                <div className="mb-4">
-                  <div className="flex justify-between text-sm text-gray-400 mb-1">
-                    <span>Available: {listing.availableUnits} units</span>
-                  </div>
-                  <div className="w-full bg-gray-700 rounded-full h-2">
-                    <div 
-                      className="bg-blue-600 h-2 rounded-full" 
-                      style={{ 
-                        width: `${listing.maxUnitsAvailable 
-                          ? Math.min(100, (listing.availableUnits / listing.maxUnitsAvailable) * 100) 
-                          : Math.min(100, (listing.availableUnits / (listing.availableUnits + 10)) * 100)}%` 
-                      }}
-                    ></div>
-                  </div>
-                </div>
-                
-                <div className="flex items-center mt-4">
-                  <input
-                    type="number"
-                    min="1"
-                    max={listing.availableUnits}
-                    value={purchaseAmount[listing._id] || ''}
-                    onChange={(e) => setPurchaseAmount({
-                      ...purchaseAmount,
-                      [listing._id]: parseInt(e.target.value) || 0
-                    })}
-                    className="bg-gray-700 border border-gray-600 rounded-l-md px-3 py-2 text-white w-24"
-                    placeholder="Units"
-                  />
-                  <button
-                    onClick={() => handlePurchase(listing._id)}
-                    disabled={processingPurchase === listing._id || !connected}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-r-md px-4 py-2"
-                  >
-                    {processingPurchase === listing._id ? (
-                      <div className="flex items-center">
-                        <div className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent mr-2"></div>
-                        Processing...
-                      </div>
-                    ) : "Buy Now"}
-                  </button>
-                </div>
-                
-                {purchaseAmount[listing._id] > 0 && (
-                  <div className="mt-2 text-right text-sm">
-                    <span className="text-gray-400">Total: </span>
-                    <span className="text-white font-medium">${(purchaseAmount[listing._id] * listing.pricePerUnit).toFixed(2)}</span>
-                    <span className="text-gray-400 ml-1">({purchaseAmount[listing._id] * listing.pricePerUnit} Bijlee tokens)</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <p className="text-gray-400">Loading listings...</p>
         ) : (
-          <div className="bg-gray-900/70 backdrop-blur-md p-8 rounded-lg text-center">
-            <svg className="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-            </svg>
-            <h3 className="text-xl font-semibold text-gray-300 mb-2">No Energy Listings Available</h3>
-            <p className="text-gray-500">Check back later for available energy packages.</p>
-          </div>
-        )}
-        
-        {/* Purchase History */}
-        {purchaseHistory.length > 0 && (
-          <div className="bg-gray-900/70 backdrop-blur-md p-6 rounded-lg shadow-md border border-blue-500/20 mt-8">
-            <h3 className="text-lg font-semibold mb-4 text-white">Your Purchase History</h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-700">
-                <thead className="bg-gray-800/70">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Date</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Energy Source</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Units</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Price</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Total</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Transaction</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-gray-800/40 divide-y divide-gray-700">
-                  {purchaseHistory.map((purchase) => (
-                    <tr key={purchase.id}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                        {new Date(purchase.date).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                        {purchase.listingName}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                        {purchase.amount}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                        ${purchase.pricePerUnit.toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                        ${purchase.total.toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          purchase.status === "completed"
-                            ? "bg-green-900 text-green-200"
-                            : purchase.status === "pending"
-                            ? "bg-yellow-900 text-yellow-200"
-                            : "bg-red-900 text-red-200"
-                        }`}>
-                          {purchase.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-400">
-                        <a 
-                          href={`https://explorer.solana.com/tx/${purchase.transactionHash}?cluster=devnet`} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="hover:underline"
-                        >
-                          View
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              {listings.map(listing => (
+                <div key={listing._id} className="bg-gray-800/50 p-6 rounded-lg border border-gray-700/50">
+                  <h3 className="text-xl font-semibold text-white mb-2">{listing.name}</h3>
+                  <p className="text-gray-300 mb-2">{listing.location}</p>
+                  <p className="text-blue-400 font-medium mb-2">${listing.pricePerUnit.toFixed(2)} per unit</p>
+                  <p className="text-sm text-gray-400 mb-4">Available: {listing.availableUnits}</p>
+                  <div className="flex items-center mb-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max={listing.availableUnits}
+                      value={purchaseAmount[listing._id] || ''}
+                      onChange={(e) => setPurchaseAmount({
+                        ...purchaseAmount,
+                        [listing._id]: parseInt(e.target.value) || 0
+                      })}
+                      className="bg-gray-700 border border-gray-600 rounded-l-md px-3 py-2 text-white w-24"
+                      placeholder="Units"
+                    />
+                    <button
+                      onClick={() => handlePurchase(listing._id)}
+                      disabled={processingPurchase === listing._id || !connected}
+                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-r-md px-4 py-2"
+                    >
+                      {processingPurchase === listing._id ? 'Processing...' : 'Buy Now'}
+                    </button>
+                  </div>
+                  {purchaseAmount[listing._id] > 0 && (
+                    <p className="text-sm text-right text-white">
+                      Total: ${(purchaseAmount[listing._id] * listing.pricePerUnit).toFixed(2)} Bijlee tokens
+                    </p>
+                  )}
+                </div>
+              ))}
             </div>
-          </div>
+
+            {/* Purchase History Section */}
+            <div className="mt-8">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-semibold text-white">Purchase History</h3>
+                <button 
+                  onClick={() => setShowHistory(!showHistory)} 
+                  className="text-blue-400 hover:text-blue-300 flex items-center"
+                >
+                  {showHistory ? 'Hide' : 'Show'} History
+                  <span className="ml-1">{showHistory ? '▲' : '▼'}</span>
+                </button>
+              </div>
+              
+              {showHistory && (
+                <>
+                  {purchaseHistory.length === 0 ? (
+                    <p className="text-gray-400">No purchase history yet.</p>
+                  ) : (
+                    <div className="bg-gray-800/50 rounded-lg border border-gray-700/50 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-700/50">
+                          <tr>
+                            <th className="py-3 px-4 text-left">Date</th>
+                            <th className="py-3 px-4 text-left">Listing</th>
+                            <th className="py-3 px-4 text-left">Units</th>
+                            <th className="py-3 px-4 text-left">Total</th>
+                            <th className="py-3 px-4 text-left">Transaction</th>
+                            <th className="py-3 px-4 text-left">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {purchaseHistory.map(purchase => (
+                            <tr key={purchase.id} className="border-t border-gray-700/50">
+                              <td className="py-3 px-4">{new Date(purchase.date).toLocaleString()}</td>
+                              <td className="py-3 px-4">{purchase.listingName}</td>
+                              <td className="py-3 px-4">{purchase.amount}</td>
+                              <td className="py-3 px-4">${purchase.total.toFixed(2)}</td>
+                              <td className="py-3 px-4">
+                                <a 
+                                  href={`https://explorer.solana.com/tx/${purchase.transactionHash}?cluster=devnet`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-blue-400 hover:text-blue-300"
+                                >
+                                  {purchase.transactionHash.slice(0, 8)}...
+                                </a>
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className="inline-block px-2 py-1 rounded-full text-xs bg-green-900/50 text-green-400">
+                                  {purchase.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
-  );
-}
-
-// Make sure the SolanaProvider wraps the entire component
-export default function Dashboard() {
-  return (
-    <SessionProvider>
-      <SolanaProvider>
-        <DashboardContent />
-      </SolanaProvider>
-    </SessionProvider>
   );
 }

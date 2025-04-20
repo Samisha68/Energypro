@@ -1,0 +1,89 @@
+{
+  "version": "0.1.0",
+  "name": "energy_trading",
+  "address": "2AR9XUwfsHxnNQkQU3jzMcqct55X9TUiK5TBCAxDNygB",
+  "metadata": {
+    "name": "energy_trading",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "process_purchase",
+      "discriminator": [
+        38,
+        233,
+        48,
+        62,
+        162,
+        120,
+        177,
+        244
+      ],
+      "accounts": [
+        {
+          "name": "buyer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "transaction",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "buyer_token_account",
+          "writable": true
+        },
+        {
+          "name": "seller",
+          "writable": false
+        },
+        {
+          "name": "seller_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "writable": false,
+          "signer": false,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "writable": false,
+          "signer": false,
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "listing_id",
+          "type": "string"
+        },
+        {
+          "name": "units",
+          "type": "u64"
+        },
+        {
+          "name": "price_per_unit",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "CalculationError",
+      "msg": "Error in calculation"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidPaymentReceiver",
+      "msg": "Invalid payment receiver"
+    }
+  ],
+  "types": []
+}
