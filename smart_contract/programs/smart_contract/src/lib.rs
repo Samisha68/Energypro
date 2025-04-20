@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, Transfer};
 use std::str::FromStr;
 
-declare_id!("71p7sfU3FKyP2hv9aVqZV1ha6ZzJ2VkReNjsGDoqtdRQ");
+declare_id!("2AR9XUwfsHxnNQkQU3jzMcqct55X9TUiK5TBCAxDNygB");
 
 #[program]
 pub mod energy_trading {

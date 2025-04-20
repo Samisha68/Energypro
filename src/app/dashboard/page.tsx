@@ -159,10 +159,76 @@ function DashboardContent() {
         wallet.publicKey
       );
 
-      const sellerTokenAccount = await getAssociatedTokenAddress(
-        new PublicKey(BIJLEE_TOKEN_MINT),
-        new PublicKey(PAYMENT_RECEIVER)
+      console.log("Checking if seller token account exists...");
+      // Import necessary SPL Token functions
+      const { getAccount, createAssociatedTokenAccountInstruction } = await import('@solana/spl-token');
+      
+      // Check if seller account exists - make sure we're using the correct Associated Token Account
+      const sellerTokenAddress = await getAssociatedTokenAddress(
+        BIJLEE_TOKEN_MINT,
+        PAYMENT_RECEIVER,
+        false, // allowOwnerOffCurve = false to ensure this is a standard wallet-owned ATA
       );
+      
+      console.log("Seller ATA (standard):", sellerTokenAddress.toBase58());
+      
+      // Create transaction for account creation if needed
+      const { Transaction } = await import('@solana/web3.js');
+      const transaction = new Transaction();
+      
+      let sellerAccountExists = true;
+      try {
+        const sellerAccount = await getAccount(connection, sellerTokenAddress);
+        console.log("Seller token account exists:", sellerTokenAddress.toBase58());
+        // Verify proper ownership
+        console.log("Seller token account owner:", sellerAccount.owner.toBase58());
+        if (!sellerAccount.owner.equals(PAYMENT_RECEIVER)) {
+          console.warn("Seller token account is not properly owned by the seller!");
+        }
+      } catch (e) {
+        console.log("Seller token account doesn't exist, will create it");
+        sellerAccountExists = false;
+        // Add instruction to create seller token account
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            wallet.publicKey, // payer
+            sellerTokenAddress, // associated token account
+            PAYMENT_RECEIVER, // owner - this should be the seller's wallet
+            BIJLEE_TOKEN_MINT, // mint
+          )
+        );
+      }
+      
+      // If we need to create seller account, send the transaction first
+      if (!sellerAccountExists) {
+        console.log("Creating seller token account...");
+        
+        // Set recent blockhash and fee payer
+        transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+        transaction.feePayer = wallet.publicKey;
+        
+        // Sign transaction
+        if (!wallet.signTransaction) {
+          throw new Error("Wallet does not support signTransaction");
+        }
+        
+        console.log("Signing transaction...");
+        const signedTransaction = await wallet.signTransaction(transaction);
+        
+        // Send transaction
+        console.log("Sending create token account transaction...");
+        const txid = await connection.sendRawTransaction(signedTransaction.serialize());
+        console.log("Create account transaction sent:", txid);
+        
+        // Wait for confirmation
+        console.log("Waiting for confirmation...");
+        const confirmation = await connection.confirmTransaction(txid);
+        if (confirmation.value.err) {
+          throw new Error("Failed to create seller token account: " + JSON.stringify(confirmation.value.err));
+        }
+        
+        console.log("Seller token account created successfully!");
+      }
 
       // Derive the transaction PDA
       const [transactionPda, transactionBump] = PublicKey.findProgramAddressSync(
@@ -182,7 +248,7 @@ function DashboardContent() {
       console.log("Buyer Pubkey:", anchorWallet.publicKey.toBase58());
       console.log("Buyer Token Acc:", buyerTokenAccount.toBase58());
       console.log("Seller Pubkey:", PAYMENT_RECEIVER.toBase58());
-      console.log("Seller Token Acc:", sellerTokenAccount.toBase58());
+      console.log("Seller Token Acc:", sellerTokenAddress.toBase58());
       console.log("Transaction PDA:", transactionPda.toBase58());
       console.log("Token Program:", TOKEN_PROGRAM_ID.toBase58());
       console.log("System Program:", SystemProgram.programId.toBase58());
@@ -210,102 +276,89 @@ function DashboardContent() {
       
       try {
         // Calculate total amount in lamports (smallest unit)
-        const totalAmount = units * pricePerUnitInt;
-        console.log("Total amount to transfer:", totalAmount);
+        // Use a more reasonable decimal multiplier to make amounts visible but not excessive
+        const DECIMALS = 2; // Use 10^2 = 100 for reasonable amounts
+        const totalAmount = units * pricePerUnitInt * Math.pow(10, DECIMALS);
+        console.log("Total amount to transfer (with decimals):", totalAmount);
         
-        // Import all necessary SPL Token functions
+        // Import necessary SPL Token functions
         const { 
           getOrCreateAssociatedTokenAccount,
           getAssociatedTokenAddress,
           createAssociatedTokenAccountInstruction,
-          createTransferInstruction,
           getAccount,
           transfer 
         } = await import('@solana/spl-token');
         
-        // Import necessary web3 classes
-        const { Transaction } = await import('@solana/web3.js');
-        
-        // Create a transaction to handle account creation and transfer
-        const transaction = new Transaction();
-        
-        console.log("Checking if buyer token account exists...");
-        // Check if buyer account exists
-        const buyerTokenAddress = await getAssociatedTokenAddress(
+        // Get buyer token account - use getOrCreateAssociatedTokenAccount to ensure it exists
+        console.log("Getting or creating buyer token account...");
+        const buyerAccount = await getOrCreateAssociatedTokenAccount(
+          connection,
+          wallet as any, // Use wallet adapter directly
           BIJLEE_TOKEN_MINT,
           wallet.publicKey
         );
+        console.log("Buyer account:", buyerAccount.address.toBase58());
         
-        let buyerAccountExists = true;
-        try {
-          await getAccount(connection, buyerTokenAddress);
-          console.log("Buyer token account exists:", buyerTokenAddress.toBase58());
-        } catch (e) {
-          console.log("Buyer token account doesn't exist, will create it");
-          buyerAccountExists = false;
-          // Add instruction to create buyer token account
-          transaction.add(
-            createAssociatedTokenAccountInstruction(
-              wallet.publicKey, // payer
-              buyerTokenAddress, // associated token account
-              wallet.publicKey, // owner
-              BIJLEE_TOKEN_MINT // mint
-            )
-          );
-        }
-        
-        console.log("Checking if seller token account exists...");
-        // Check if seller account exists
+        // Check if seller account exists - make sure we're using the correct Associated Token Account
+        console.log("Checking seller token account...");
         const sellerTokenAddress = await getAssociatedTokenAddress(
           BIJLEE_TOKEN_MINT,
-          PAYMENT_RECEIVER
+          PAYMENT_RECEIVER,
+          false // allowOwnerOffCurve = false to ensure this is a standard wallet-owned ATA
         );
         
-        let sellerAccountExists = true;
-        try {
-          await getAccount(connection, sellerTokenAddress);
-          console.log("Seller token account exists:", sellerTokenAddress.toBase58());
-        } catch (e) {
-          console.log("Seller token account doesn't exist, will create it");
-          sellerAccountExists = false;
-          // Add instruction to create seller token account
-          transaction.add(
-            createAssociatedTokenAccountInstruction(
-              wallet.publicKey, // payer
-              sellerTokenAddress, // associated token account
-              PAYMENT_RECEIVER, // owner
-              BIJLEE_TOKEN_MINT // mint
-            )
-          );
+        // The seller account might not exist yet, so create it if needed
+        console.log("Getting or creating seller token account...");
+        const sellerAccount = await getOrCreateAssociatedTokenAccount(
+          connection,
+          wallet as any, // Use wallet adapter directly
+          BIJLEE_TOKEN_MINT,
+          PAYMENT_RECEIVER // This ensures the token account is properly owned by the seller
+        );
+        
+        // Double check ownership
+        console.log("Seller account:", sellerAccount.address.toBase58());
+        console.log("Seller account owner:", sellerAccount.owner.toBase58());
+        console.log("Expected owner:", PAYMENT_RECEIVER.toBase58());
+        
+        if (!sellerAccount.owner.equals(PAYMENT_RECEIVER)) {
+          throw new Error("Created seller account is not properly owned by the seller!");
         }
         
-        // Add transfer instruction if both accounts exist or will be created
-        console.log("Adding transfer instruction");
-        transaction.add(
+        console.log("Transferring tokens...");
+        // Instead of using transfer, which tries to use the wallet's secretKey (which is not available),
+        // we'll manually create and send a transfer transaction that the wallet can sign
+        const { createTransferInstruction } = await import('@solana/spl-token');
+        const { Transaction } = await import('@solana/web3.js');
+
+        // Create a new transaction
+        const transferTx = new Transaction();
+        
+        // Add the transfer instruction to the transaction
+        transferTx.add(
           createTransferInstruction(
-            buyerTokenAddress, // source
-            sellerTokenAddress, // destination
-            wallet.publicKey, // owner
+            buyerAccount.address, // source
+            sellerAccount.address, // destination
+            wallet.publicKey, // owner of source account
             totalAmount // amount
           )
         );
         
         // Set recent blockhash and fee payer
-        transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-        transaction.feePayer = wallet.publicKey;
+        transferTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+        transferTx.feePayer = wallet.publicKey;
         
-        // Sign transaction
+        // Sign the transaction with the wallet
         if (!wallet.signTransaction) {
           throw new Error("Wallet does not support signTransaction");
         }
+        const signedTransaction = await wallet.signTransaction(transferTx);
         
-        console.log("Signing transaction...");
-        const signedTransaction = await wallet.signTransaction(transaction);
-        
-        // Send transaction
-        console.log("Sending transaction...");
+        // Send the signed transaction
+        console.log("Sending signed transaction...");
         const txid = await connection.sendRawTransaction(signedTransaction.serialize());
-        console.log("Transaction sent:", txid);
+        console.log("Transfer transaction sent:", txid);
         
         // Confirm transaction
         console.log("Confirming transaction...");
@@ -315,6 +368,7 @@ function DashboardContent() {
         }
         
         console.log("Transaction confirmed successfully!");
+        
         return txid;
       } catch (directError) {
         console.error('Direct transfer failed:', directError);
@@ -401,7 +455,7 @@ function DashboardContent() {
         listingName: listing.name,
         amount,
         pricePerUnit: listing.pricePerUnit,
-        total: amount * listing.pricePerUnit,
+        total: amount * listing.pricePerUnit * Math.pow(10, 2), // Use 10^2 multiplier
         date: new Date().toISOString(),
         transactionHash: tx,
         status: "completed"
@@ -442,6 +496,30 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-[#0f1422] text-white">
+      {/* Navigation Bar */}
+      <nav className="bg-gray-900/90 backdrop-blur-md border-b border-blue-500/20">
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center">
+              <a href="/" className="text-xl font-bold text-blue-400 hover:text-blue-300 transition-colors">EnergyPro</a>
+            </div>
+            <div className="flex items-center">
+              {session?.user?.name && (
+                <span className="text-gray-300 mr-4">
+                  Welcome, {session.user.name}
+                </span>
+              )}
+            <button 
+                onClick={() => signOut()}
+                className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+        </div>
+      </nav>
+
       <div className="px-6 py-8 max-w-7xl mx-auto">
         <h2 className="text-2xl font-bold mb-6">Energy Marketplace</h2>
 
@@ -484,7 +562,7 @@ function DashboardContent() {
                 <div key={listing._id} className="bg-gray-800/50 p-6 rounded-lg border border-gray-700/50">
                   <h3 className="text-xl font-semibold text-white mb-2">{listing.name}</h3>
                   <p className="text-gray-300 mb-2">{listing.location}</p>
-                  <p className="text-blue-400 font-medium mb-2">${listing.pricePerUnit.toFixed(2)} per unit</p>
+                  <p className="text-blue-400 font-medium mb-2">{listing.pricePerUnit.toFixed(2)} BIJLEE per unit</p>
                   <p className="text-sm text-gray-400 mb-4">Available: {listing.availableUnits}</p>
                   <div className="flex items-center mb-3">
                     <input
@@ -509,7 +587,7 @@ function DashboardContent() {
                   </div>
                   {purchaseAmount[listing._id] > 0 && (
                     <p className="text-sm text-right text-white">
-                      Total: ${(purchaseAmount[listing._id] * listing.pricePerUnit).toFixed(2)} Bijlee tokens
+                      Total: {(purchaseAmount[listing._id] * listing.pricePerUnit * Math.pow(10, 2)).toFixed(0)} BIJLEE tokens
                     </p>
                   )}
                 </div>
@@ -552,7 +630,7 @@ function DashboardContent() {
                               <td className="py-3 px-4">{new Date(purchase.date).toLocaleString()}</td>
                               <td className="py-3 px-4">{purchase.listingName}</td>
                               <td className="py-3 px-4">{purchase.amount}</td>
-                              <td className="py-3 px-4">${purchase.total.toFixed(2)}</td>
+                              <td className="py-3 px-4">{purchase.total.toFixed(0)} BIJLEE</td>
                               <td className="py-3 px-4">
                                 <a 
                                   href={`https://explorer.solana.com/tx/${purchase.transactionHash}?cluster=devnet`} 
