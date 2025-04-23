@@ -4,13 +4,13 @@ import { SessionProvider, useSession, signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { SolanaProvider } from '@/app/components/solana-provider';
 
-import { PublicKey, Connection, SystemProgram } from '@solana/web3.js';
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { PublicKey, Connection,  Transaction } from '@solana/web3.js';
+import { getAssociatedTokenAddress,  createTransferInstruction } from "@solana/spl-token";
 import { Program, AnchorProvider, Wallet, Idl } from '@project-serum/anchor';
-import BN from 'bn.js';
 import idlJson from "@/app/lib/idl/energy_trading.json";
 
 // Cast the imported JSON to the Idl type
@@ -96,9 +96,13 @@ function DashboardContent() {
     try {
       setIsLoading(true);
       const response = await fetch("/api/listings");
+      if (!response.ok) {
+        throw new Error(`Failed to fetch listings: ${response.statusText}`);
+      }
       const data = await response.json();
       setListings(data?.listings || []);
-    } catch (err) {
+    } catch (fetchError) {
+      console.error("Fetch listings error:", fetchError);
       setError("Failed to load energy listings. Please try again later.");
     } finally {
       setIsLoading(false);
@@ -113,19 +117,14 @@ function DashboardContent() {
     try {
       const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com");
       
-      // Create Anchor wallet from Solana wallet adapter
       const anchorWallet = {
         publicKey: wallet.publicKey,
-        // Ensure signTransaction is always defined
-        signTransaction: wallet.signTransaction ? wallet.signTransaction : (tx) => {
+        signTransaction: wallet.signTransaction ? wallet.signTransaction : (/* tx */) => {
             console.error("Attempted to use signTransaction, but the connected wallet does not support it.");
             return Promise.reject(new Error("signTransaction is not supported by this wallet."));
         },
-        // Ensure signAllTransactions is always defined, providing a compliant fallback
-        signAllTransactions: wallet.signAllTransactions ? wallet.signAllTransactions : (txs) => {
+        signAllTransactions: wallet.signAllTransactions ? wallet.signAllTransactions : (/* txs */) => {
             console.error("Attempted to use signAllTransactions, but the connected wallet does not support it.");
-            // Provide a basic fallback that rejects, as Anchor might expect this method.
-            // A more robust fallback could loop and call signTransaction if available.
             return Promise.reject(new Error("signAllTransactions is not supported by this wallet."));
         },
       } as Wallet;
@@ -134,282 +133,130 @@ function DashboardContent() {
         commitment: 'confirmed',
       });
 
-      // Initialize the program using the strictly typed IDL
-      // Check if address exists at root level or in metadata
       let programAddress;
       if ((idl as any).address) {
         programAddress = new PublicKey((idl as any).address);
       } else if (idl.metadata && (idl.metadata as any).address) {
         programAddress = new PublicKey((idl.metadata as any).address);
       } else {
-        throw new Error('Program address not found in IDL');
+        console.warn('Program address not found in IDL, continuing with direct transfer.');
       }
-      
-      console.log("Program Address:", programAddress.toBase58());
-      const program = new Program(idl, programAddress, provider);
+      const program = programAddress ? new Program(idl, programAddress, provider) : null;
+      if(program) console.log("Program Initialized (though maybe not used for transfer)");
 
-      // Before creating PublicKey instances
-      console.log("BIJLEE_TOKEN_MINT:", BIJLEE_TOKEN_MINT.toBase58());
-      console.log("PAYMENT_RECEIVER:", PAYMENT_RECEIVER.toBase58());
-      console.log("Wallet PublicKey:", wallet.publicKey?.toBase58());
-
-      // Get token accounts
       const buyerTokenAccount = await getAssociatedTokenAddress(
-        new PublicKey(BIJLEE_TOKEN_MINT),
+        BIJLEE_TOKEN_MINT,
         wallet.publicKey
       );
 
-      console.log("Checking if seller token account exists...");
-      // Import necessary SPL Token functions
-      const { getAccount, createAssociatedTokenAccountInstruction } = await import('@solana/spl-token');
-      
-      // Check if seller account exists - make sure we're using the correct Associated Token Account
-      const sellerTokenAddress = await getAssociatedTokenAddress(
-        BIJLEE_TOKEN_MINT,
-        PAYMENT_RECEIVER,
-        false, // allowOwnerOffCurve = false to ensure this is a standard wallet-owned ATA
-      );
-      
-      console.log("Seller ATA (standard):", sellerTokenAddress.toBase58());
-      
-      // Create transaction for account creation if needed
-      const { Transaction } = await import('@solana/web3.js');
-      const transaction = new Transaction();
-      
-      let sellerAccountExists = true;
-      try {
-        const sellerAccount = await getAccount(connection, sellerTokenAddress);
-        console.log("Seller token account exists:", sellerTokenAddress.toBase58());
-        // Verify proper ownership
-        console.log("Seller token account owner:", sellerAccount.owner.toBase58());
-        if (!sellerAccount.owner.equals(PAYMENT_RECEIVER)) {
-          console.warn("Seller token account is not properly owned by the seller!");
-        }
-      } catch (e) {
-        console.log("Seller token account doesn't exist, will create it");
-        sellerAccountExists = false;
-        // Add instruction to create seller token account
-        transaction.add(
-          createAssociatedTokenAccountInstruction(
-            wallet.publicKey, // payer
-            sellerTokenAddress, // associated token account
-            PAYMENT_RECEIVER, // owner - this should be the seller's wallet
-            BIJLEE_TOKEN_MINT, // mint
-          )
-        );
-      }
-      
-      // If we need to create seller account, send the transaction first
-      if (!sellerAccountExists) {
-        console.log("Creating seller token account...");
-        
-        // Set recent blockhash and fee payer
-        transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-        transaction.feePayer = wallet.publicKey;
-        
-        // Sign transaction
-        if (!wallet.signTransaction) {
-          throw new Error("Wallet does not support signTransaction");
-        }
-        
-        console.log("Signing transaction...");
-        const signedTransaction = await wallet.signTransaction(transaction);
-        
-        // Send transaction
-        console.log("Sending create token account transaction...");
-        const txid = await connection.sendRawTransaction(signedTransaction.serialize());
-        console.log("Create account transaction sent:", txid);
-        
-        // Wait for confirmation
-        console.log("Waiting for confirmation...");
-        const confirmation = await connection.confirmTransaction(txid);
-        if (confirmation.value.err) {
-          throw new Error("Failed to create seller token account: " + JSON.stringify(confirmation.value.err));
-        }
-        
-        console.log("Seller token account created successfully!");
-      }
+      console.log("Checking seller token account...");
+      const { getOrCreateAssociatedTokenAccount } = await import('@solana/spl-token');
 
-      // Derive the transaction PDA
-      const [transactionPda, transactionBump] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("transaction"),
-          anchorWallet.publicKey.toBuffer(),
-          Buffer.from(listingId)
-        ],
-        program.programId
-      );
-
-      // --- DEBUG LOGGING START ---
-      console.log("--- Transaction Data ---");
-      console.log("Listing ID:", listingId);
-      console.log("Units (BN):", units.toString());
-      console.log("Price Per Unit (BN):", pricePerUnit.toString());
-      console.log("Buyer Pubkey:", anchorWallet.publicKey.toBase58());
-      console.log("Buyer Token Acc:", buyerTokenAccount.toBase58());
-      console.log("Seller Pubkey:", PAYMENT_RECEIVER.toBase58());
-      console.log("Seller Token Acc:", sellerTokenAddress.toBase58());
-      console.log("Transaction PDA:", transactionPda.toBase58());
-      console.log("Token Program:", TOKEN_PROGRAM_ID.toBase58());
-      console.log("System Program:", SystemProgram.programId.toBase58());
-      console.log("--- End Transaction Data ---");
-      // --- DEBUG LOGGING END ---
-
-      // Ensure pricePerUnit is an integer for BN
       const pricePerUnitInt = Math.floor(pricePerUnit);
-      console.log("Using Integer Price Per Unit:", pricePerUnitInt); // Add log for verification
 
-      // Before creating BN instances
-      console.log("Units before BN:", units);
-      console.log("Price Per Unit Int before BN:", pricePerUnitInt);
+      console.log("--- Pre-Transaction Data ---");
+      console.log("Listing ID:", listingId);
+      console.log("Units:", units);
+      console.log("Price Per Unit (Int):", pricePerUnitInt);
+      console.log("Buyer Pubkey:", wallet.publicKey.toBase58());
+      console.log("Buyer Token Acc Address:", buyerTokenAccount.toBase58());
+      console.log("Seller Pubkey:", PAYMENT_RECEIVER.toBase58());
+      console.log("BIJLEE Token Mint:", BIJLEE_TOKEN_MINT.toBase58());
+      console.log("--- End Pre-Transaction Data ---");
 
-      // Convert the MongoDB ObjectId to a more compact representation
-      // This helps avoid buffer size issues during encoding
-      const listingIdHash = Array.from(Buffer.from(listingId)).reduce(
-        (hash, byte) => (hash * 31 + byte) % 0xFFFFFFFF, 0
-      );
-      console.log("Using hash of listing ID:", listingIdHash);
-
-      // Let's try a direct token transfer instead of using the smart contract
-      // since we're having persistent encoding issues
       console.log("SIMPLIFIED: Direct token transfer");
-      
+
       try {
-        // Calculate total amount in lamports (smallest unit)
-        // Use a more reasonable decimal multiplier to make amounts visible but not excessive
-        const DECIMALS = 2; // Use 10^2 = 100 for reasonable amounts
+        const DECIMALS = 2;
         const totalAmount = units * pricePerUnitInt * Math.pow(10, DECIMALS);
         console.log("Total amount to transfer (with decimals):", totalAmount);
-        
-        // Import necessary SPL Token functions
-        const { 
-          getOrCreateAssociatedTokenAccount,
-          getAssociatedTokenAddress,
-          createAssociatedTokenAccountInstruction,
-          getAccount,
-          transfer 
-        } = await import('@solana/spl-token');
-        
-        // Get buyer token account - use getOrCreateAssociatedTokenAccount to ensure it exists
+
         console.log("Getting or creating buyer token account...");
         const buyerAccount = await getOrCreateAssociatedTokenAccount(
           connection,
-          wallet as any, // Use wallet adapter directly
+          anchorWallet as any,
           BIJLEE_TOKEN_MINT,
           wallet.publicKey
         );
         console.log("Buyer account:", buyerAccount.address.toBase58());
-        
-        // Check if seller account exists - make sure we're using the correct Associated Token Account
-        console.log("Checking seller token account...");
-        const sellerTokenAddress = await getAssociatedTokenAddress(
-          BIJLEE_TOKEN_MINT,
-          PAYMENT_RECEIVER,
-          false // allowOwnerOffCurve = false to ensure this is a standard wallet-owned ATA
-        );
-        
-        // The seller account might not exist yet, so create it if needed
+
         console.log("Getting or creating seller token account...");
         const sellerAccount = await getOrCreateAssociatedTokenAccount(
           connection,
-          wallet as any, // Use wallet adapter directly
+          anchorWallet as any,
           BIJLEE_TOKEN_MINT,
-          PAYMENT_RECEIVER // This ensures the token account is properly owned by the seller
+          PAYMENT_RECEIVER
         );
-        
-        // Double check ownership
         console.log("Seller account:", sellerAccount.address.toBase58());
-        console.log("Seller account owner:", sellerAccount.owner.toBase58());
-        console.log("Expected owner:", PAYMENT_RECEIVER.toBase58());
-        
-        if (!sellerAccount.owner.equals(PAYMENT_RECEIVER)) {
-          throw new Error("Created seller account is not properly owned by the seller!");
-        }
-        
-        console.log("Transferring tokens...");
-        // Instead of using transfer, which tries to use the wallet's secretKey (which is not available),
-        // we'll manually create and send a transfer transaction that the wallet can sign
-        const { createTransferInstruction } = await import('@solana/spl-token');
-        const { Transaction } = await import('@solana/web3.js');
 
-        // Create a new transaction
+        if (!sellerAccount.owner.equals(PAYMENT_RECEIVER)) {
+            throw new Error("Created seller account is not properly owned by the seller!");
+        }
+
+        console.log("Transferring tokens...");
         const transferTx = new Transaction();
-        
-        // Add the transfer instruction to the transaction
         transferTx.add(
           createTransferInstruction(
-            buyerAccount.address, // source
-            sellerAccount.address, // destination
-            wallet.publicKey, // owner of source account
-            totalAmount // amount
+            buyerAccount.address,
+            sellerAccount.address,
+            wallet.publicKey,
+            totalAmount
           )
         );
-        
-        // Set recent blockhash and fee payer
+
         transferTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
         transferTx.feePayer = wallet.publicKey;
-        
-        // Sign the transaction with the wallet
+
         if (!wallet.signTransaction) {
           throw new Error("Wallet does not support signTransaction");
         }
+        console.log("Signing transaction...");
         const signedTransaction = await wallet.signTransaction(transferTx);
-        
-        // Send the signed transaction
+
         console.log("Sending signed transaction...");
         const txid = await connection.sendRawTransaction(signedTransaction.serialize());
         console.log("Transfer transaction sent:", txid);
-        
-        // Confirm transaction
+
         console.log("Confirming transaction...");
-        const confirmation = await connection.confirmTransaction(txid);
+        const confirmation = await connection.confirmTransaction(txid, 'confirmed');
         if (confirmation.value.err) {
+          console.error("Transaction Confirmation Error:", confirmation.value.err);
+          try {
+            const txDetails = await connection.getTransaction(txid, {commitment: 'confirmed', maxSupportedTransactionVersion: 0});
+            console.error("Failed Transaction Logs:", txDetails?.meta?.logMessages);
+          } catch (logError) {
+            console.error("Could not fetch logs for failed transaction:", logError);
+          }
           throw new Error("Transaction failed: " + JSON.stringify(confirmation.value.err));
         }
-        
+
         console.log("Transaction confirmed successfully!");
-        
         return txid;
+
       } catch (directError) {
         console.error('Direct transfer failed:', directError);
+        if (directError instanceof Error) {
+            if (directError.message.includes("Account does not exist")) {
+                setError("Token account error. Please ensure accounts exist or try again.");
+            } else if (directError.message.includes("insufficient funds")) {
+                setError("Insufficient BIJLEE tokens for purchase.");
+            } else {
+                setError(`Transfer failed: ${directError.message}`);
+            }
+        } else {
+            setError("An unknown error occurred during the transfer.");
+        }
         throw directError;
       }
 
-      // ----- Original smart contract approach (commented out) -----
-      /*
-      const tx = await program.methods
-        .processPurchase(
-          listingId,
-          new BN(units),
-          new BN(pricePerUnitInt)
-        )
-        .accounts({
-          buyer: anchorWallet.publicKey,
-          transaction: transactionPda,
-          buyer_token_account: buyerTokenAccount,
-          seller: new PublicKey(PAYMENT_RECEIVER),
-          seller_token_account: sellerTokenAccount,
-          token_program: TOKEN_PROGRAM_ID,
-          system_program: SystemProgram.programId,
-        })
-        .rpc();
-
-      console.log('Transaction sent:', tx);
-
-      // Wait for confirmation
-      const confirmation = await connection.confirmTransaction(tx);
-      if (confirmation.value.err) {
-        throw new Error('Transaction failed');
-      }
-
-      console.log('Transaction confirmed');
-      return tx;
-      */
     } catch (error) {
-      // Log the error without trying to process it
-      console.error('Transaction execution error:', error);
-      throw error;
+      console.error("Transaction setup error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to initiate purchase";
+      setError(errorMessage);
+    } finally {
+      setProcessingPurchase(null);
     }
+    return undefined;
   };
 
   const handlePurchase = async (listingId: string) => {
@@ -435,48 +282,65 @@ function DashboardContent() {
       return;
     }
 
+    // Add logging for values before transaction
+    console.log(`handlePurchase: listingId=${listingId}, amount=${amount}`);
+
+    if (!listing || amount <= 0) {
+      setError("Invalid listing or amount");
+      setProcessingPurchase(null);
+      return;
+    }
+
+    setError(null); // Clear previous errors
+    setSuccessMessage(null); // Clear previous success messages
     setProcessingPurchase(listingId);
-    setError(null);
 
     try {
       const tx = await executeTransaction(listingId, amount, listing.pricePerUnit);
-      
-      // Update listings
-      setListings(listings.map(l => 
-        l._id === listingId 
-          ? { ...l, availableUnits: l.availableUnits - amount } 
-          : l
-      ));
 
-      // Update purchase history
-      setPurchaseHistory([{
-        id: Date.now().toString(),
-        listingId,
-        listingName: listing.name,
-        amount,
-        pricePerUnit: listing.pricePerUnit,
-        total: amount * listing.pricePerUnit * Math.pow(10, 2), // Use 10^2 multiplier
-        date: new Date().toISOString(),
-        transactionHash: tx,
-        status: "completed"
-      }, ...purchaseHistory]);
+      // Only update history and show success if tx is a valid string (transaction ID)
+      if (typeof tx === 'string' && tx) {
+        // Update purchase history
+        setPurchaseHistory([{
+          id: Date.now().toString(),
+          listingId,
+          listingName: listing.name,
+          amount,
+          pricePerUnit: listing.pricePerUnit,
+          total: amount * listing.pricePerUnit * Math.pow(10, 2), // Use 10^2 multiplier
+          date: new Date().toISOString(),
+          transactionHash: tx,
+          status: "completed"
+        }, ...purchaseHistory]);
 
-      // Reset purchase amount
-      setPurchaseAmount({ ...purchaseAmount, [listingId]: 0 });
+        // Reset purchase amount
+        setPurchaseAmount({ ...purchaseAmount, [listingId]: 0 });
 
-      // Set success message
-      setSuccessMessage("Purchase completed successfully!");
-      
-      // Automatically show the purchase history
-      setShowHistory(true);
-      
-      // Clear success message after 5 seconds
-      setTimeout(() => {
-        setSuccessMessage(null);
-      }, 5000);
+        // Set success message
+        setSuccessMessage("Purchase completed successfully!");
+
+        // Automatically show the purchase history
+        setShowHistory(true);
+
+        // Clear success message after 5 seconds
+        setTimeout(() => {
+          setSuccessMessage(null);
+        }, 5000);
+      } else {
+        // If tx is undefined, an error likely occurred in executeTransaction and was handled there
+        console.log("Transaction did not return a valid ID, likely failed before sending.");
+        // setError might already be set by executeTransaction's catch block
+      }
+
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to complete purchase";
-      setError(errorMessage);
+      // This catch block primarily catches errors re-thrown from executeTransaction
+      console.error("Error during handlePurchase -> executeTransaction:", error);
+      // setError is likely already set within executeTransaction's catch blocks
+      // If not, set a generic error here:
+      if (!error) { // Check if error state is already set
+          const errorMessage = error instanceof Error ? error.message : "Failed to complete purchase";
+          setError(errorMessage);
+      }
     } finally {
       setProcessingPurchase(null);
     }
@@ -501,7 +365,9 @@ function DashboardContent() {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center">
-              <a href="/" className="text-xl font-bold text-blue-400 hover:text-blue-300 transition-colors">EnergyPro</a>
+              <Link href="/" className="text-xl font-bold text-blue-400 hover:text-blue-300 transition-colors">
+                EnergyPro
+              </Link>
             </div>
             <div className="flex items-center">
               {session?.user?.name && (
