@@ -3,7 +3,8 @@ import { connectToDatabase } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
 // Ensure database connection before defining models
-connectToDatabase().catch(console.error);
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/database')
+  .catch(console.error);
 
 // Define a schema
 const listingSchema = new mongoose.Schema({
@@ -63,53 +64,47 @@ export interface Listing {
 }
 
 export async function createListing(listing: Omit<Listing, '_id' | 'createdAt' | 'updatedAt'>) {
-  const { db } = await connectToDatabase();
-  
+  await connectToDatabase();
   const newListing = {
     ...listing,
     createdAt: new Date(),
     updatedAt: new Date()
   };
-
-  const result = await db.collection("listings").insertOne(newListing);
-  return { ...newListing, _id: result.insertedId.toString() };
+  const result = await Listing.create(newListing);
+  return result.toObject();
 }
 
-export async function getListings(sellerEmail: string) {
-  const { db } = await connectToDatabase();
-  
-  const listings = await db.collection("listings")
-    .find({ sellerEmail })
-    .sort({ createdAt: -1 })
-    .toArray();
-
-  return listings.map(listing => ({
+export async function getListings(sellerId: string) {
+  await connectToDatabase();
+  const listings = await Listing.find({ sellerId }).sort({ createdAt: -1 }).lean();
+  return listings.map((listing: any) => ({
     ...listing,
     _id: listing._id.toString()
   }));
 }
 
 export async function updateListing(id: string, updates: Partial<Listing>) {
-  const { db } = await connectToDatabase();
-  
-  const result = await db.collection("listings").updateOne(
+  await connectToDatabase();
+  const result = await Listing.updateOne(
     { _id: new ObjectId(id) },
-    { 
-      $set: { 
-        ...updates,
-        updatedAt: new Date()
-      } 
-    }
+    { $set: { ...updates, updatedAt: new Date() } }
   );
-
   return result.modifiedCount > 0;
 }
 
 export async function deleteListing(id: string) {
-  const { db } = await connectToDatabase();
-  
-  const result = await db.collection("listings").deleteOne({ _id: new ObjectId(id) });
+  await connectToDatabase();
+  const result = await Listing.deleteOne({ _id: new ObjectId(id) });
   return result.deletedCount > 0;
+}
+
+export async function getAllListings() {
+  await connectToDatabase();
+  const listings = await Listing.find({}).sort({ createdAt: -1 }).lean();
+  return listings.map((listing: any) => ({
+    ...listing,
+    _id: listing._id.toString()
+  }));
 }
 
 export default Listing;

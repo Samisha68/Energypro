@@ -1,6 +1,4 @@
 {
-  "version": "0.1.0",
-  "name": "energy_trading",
   "address": "2AR9XUwfsHxnNQkQU3jzMcqct55X9TUiK5TBCAxDNygB",
   "metadata": {
     "name": "energy_trading",
@@ -28,35 +26,26 @@
           "signer": true
         },
         {
-          "name": "transaction",
-          "writable": true,
-          "signer": false
-        },
-        {
           "name": "buyer_token_account",
           "writable": true
         },
         {
-          "name": "seller",
-          "writable": false
+          "name": "payment_receiver"
         },
         {
-          "name": "seller_token_account",
+          "name": "payment_receiver_token_account",
           "writable": true
         },
         {
           "name": "token_program",
-          "writable": false,
-          "signer": false,
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "system_program",
-          "writable": false,
-          "signer": false,
           "address": "11111111111111111111111111111111"
         }
       ],
+      
       "args": [
         {
           "name": "listing_id",
@@ -73,6 +62,30 @@
       ]
     }
   ],
+  "accounts": [
+    {
+      "name": "Dummy",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "PurchaseEvent",
+      "discriminator": [
+        229,
+        118,
+        246,
+        164,
+        59,
+        65,
+        116,
+        254
+      ]
+    }
+  ],
   "errors": [
     {
       "code": 6000,
@@ -85,5 +98,42 @@
       "msg": "Invalid payment receiver"
     }
   ],
-  "types": []
+  "types": [
+    {
+      "name": "PurchaseEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "listing_id",
+            "type": "string"
+          },
+          {
+            "name": "buyer",
+            "type": "pubkey"
+          },
+          {
+            "name": "payment_receiver",
+            "type": "pubkey"
+          },
+          {
+            "name": "units",
+            "type": "u64"
+          },
+          {
+            "name": "price_per_unit",
+            "type": "u64"
+          },
+          {
+            "name": "total_amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
 }

@@ -41,33 +41,21 @@ export async function PUT(
   { params }: { params: { listingId: string } }
 ) {
   try {
-    // Ensure database connection
     await connectDB();
-    
     const { listingId } = params;
-    
-    // Check authentication
     const session = await getServerSession(authOptions);
-    if (!session || !session.user?.id) {
+    if (!session || !session.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    // Get request body
     const body = await request.json();
-    
-    // Find the listing
     const listing = await Listing.findById(listingId);
-    
     if (!listing) {
       return NextResponse.json({ error: 'Listing not found' }, { status: 404 });
     }
-    
-    // Check if the user is the seller
-    if (listing.sellerId !== session.user.id) {
+    // Check if the user is the seller (by email)
+    if (listing.sellerId !== session.user.email) {
       return NextResponse.json({ error: 'Forbidden: Not the seller of this listing' }, { status: 403 });
     }
-    
-    // Update the listing (only allow specific fields to be updated)
     const updatedListing = await Listing.findByIdAndUpdate(
       listingId,
       {
@@ -79,11 +67,10 @@ export async function PUT(
       },
       { new: true }
     );
-    
     return NextResponse.json({ success: true, listing: updatedListing });
   } catch (error) {
     console.error('Error updating listing:', error);
-    console.error('Error details:', JSON.stringify(error, null, 2)); // More detailed error logging
+    console.error('Error details:', JSON.stringify(error, null, 2));
     return NextResponse.json({ error: 'Failed to update listing' }, { status: 500 });
   }
 }
@@ -94,36 +81,25 @@ export async function DELETE(
   { params }: { params: { listingId: string } }
 ) {
   try {
-    // Ensure database connection
     await connectDB();
-    
     const { listingId } = params;
-    
-    // Check authentication
     const session = await getServerSession(authOptions);
-    if (!session || !session.user?.id) {
+    if (!session || !session.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    // Find the listing
     const listing = await Listing.findById(listingId);
-    
     if (!listing) {
       return NextResponse.json({ error: 'Listing not found' }, { status: 404 });
     }
-    
-    // Check if the user is the seller
-    if (listing.sellerId !== session.user.id) {
+    // Check if the user is the seller (by email)
+    if (listing.sellerId !== session.user.email) {
       return NextResponse.json({ error: 'Forbidden: Not the seller of this listing' }, { status: 403 });
     }
-    
-    // Delete the listing
     await Listing.findByIdAndDelete(listingId);
-    
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting listing:', error);
-    console.error('Error details:', JSON.stringify(error, null, 2)); // More detailed error logging
+    console.error('Error details:', JSON.stringify(error, null, 2));
     return NextResponse.json({ error: 'Failed to delete listing' }, { status: 500 });
   }
 }

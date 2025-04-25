@@ -1,32 +1,32 @@
 "use client";
 
 import { SessionProvider, useSession, signOut } from "next-auth/react";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import dynamic from 'next/dynamic';
-import Link from 'next/link';
-import { useWallet } from '@solana/wallet-adapter-react';
-import { SolanaProvider } from '@/app/components/solana-provider';
+import { useState, useEffect} from "react";
+import { useRouter } from 'next/navigation';
 
-import { PublicKey, Connection,  Transaction } from '@solana/web3.js';
-import { getAssociatedTokenAddress,  createTransferInstruction } from "@solana/spl-token";
-import { Program, AnchorProvider, Wallet, Idl } from '@project-serum/anchor';
+import { SolanaProvider } from '@/app/components/solana-provider';
+import WalletButtonClient from '@/app/components/WalletButtonClient';
+
+import { PublicKey, Transaction } from '@solana/web3.js';
+import { getAssociatedTokenAddress} from "@solana/spl-token";
+import { Idl } from '@project-serum/anchor';
 import idlJson from "@/app/lib/idl/energy_trading.json";
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+
+import { FaCopy, FaExternalLinkAlt, FaBolt, FaUserFriends, FaExchangeAlt, FaTag, FaMapMarkerAlt } from 'react-icons/fa';
+import Listing from '@/app/models/Listing';
 
 // Cast the imported JSON to the Idl type
 const idl: Idl = idlJson as unknown as Idl;
 
-const WalletButton = dynamic(
-  () => import('@/app/components/solana-provider').then(mod => mod.WalletButton),
-  { ssr: false }
-);
-
-const PAYMENT_RECEIVER = new PublicKey("5PL4kXp3Ezz9uzn9jtLtjQfndKRNoQtgGPccM2kvvRad");
+const PAYMENT_RECEIVER = new PublicKey(process.env.NEXT_PUBLIC_SELLER_WALLET!);
 const BIJLEE_TOKEN_MINT = new PublicKey(
   process.env.NEXT_PUBLIC_BIJLEE_TOKEN_MINT || 
   // Use the correct Bijlee token
   "HQbqWP4LSUYLySNXP8gRbXuKRy6bioH15CsrePQnfT86"
 );
+
+const PROGRAM_ID = new PublicKey('2AR9XUwfsHxnNQkQU3jzMcqct55X9TUiK5TBCAxDNygB');
 
 interface Listing {
   _id: string;
@@ -41,6 +41,7 @@ interface Listing {
 }
 
 interface Purchase {
+  _id?: string;
   id: string;
   listingId: string;
   listingName: string;
@@ -52,478 +53,915 @@ interface Purchase {
   status: string;
 }
 
+interface EnergyLocation {
+  id: number;
+  name: string;
+  lat: number;
+  lng: number;
+  capacity: number;
+  type: string;
+}
+
 export default function Dashboard() {
   return (
     <SessionProvider>
       <SolanaProvider>
-        <DashboardContent />
+        <DashboardWithSidebar />
       </SolanaProvider>
     </SessionProvider>
   );
 }
 
-function DashboardContent() {
-  const { data: session, status } = useSession();
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [purchaseAmount, setPurchaseAmount] = useState<Record<string, number>>({});
-  const [processingPurchase, setProcessingPurchase] = useState<string | null>(null);
-  const [purchaseHistory, setPurchaseHistory] = useState<Purchase[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
+function DashboardWithSidebar() {
   const router = useRouter();
+  const [activeSection, setActiveSection] = useState<'home' | 'buy' | 'sell' | 'orders'>('buy');
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [loadingListings, setLoadingListings] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { data: session } = useSession();
+  const [myListings, setMyListings] = useState<Listing[]>([]);
+  const [loadingMyListings, setLoadingMyListings] = useState(false);
+  const [myListingsError, setMyListingsError] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction, connected } = useWallet();
+  const [buyLoading, setBuyLoading] = useState<string | null>(null);
+  const [buyError, setBuyError] = useState<string | null>(null);
+  const [buySuccess, setBuySuccess] = useState<string | null>(null);
+  const [amountInputs, setAmountInputs] = useState<{ [listingId: string]: string }>({});
+  const [myPurchases, setMyPurchases] = useState<Purchase[]>([]);
+  const [loadingPurchases, setLoadingPurchases] = useState(false);
+  const [purchasesError, setPurchasesError] = useState<string | null>(null);
+  const [energyLocations] = useState<EnergyLocation[]>([
+    { id: 1, name: "Solar Farm Alpha", lat: 37.7749, lng: -122.4194, capacity: 250, type: "solar" },
+    { id: 2, name: "Solar Array Beta", lat: 40.7128, lng: -74.0060, capacity: 180, type: "solar" },
+  ]);
+  const [statistics] = useState({
+    totalCapacity: 2005,
+    activeSellers: 153,
+    completedTransactions: 1842,
+    averagePrice: 12.74,
+  });
+  const [copied, setCopied] = useState(false);
 
-  const wallet = useWallet();
-  const connected = !!wallet.publicKey;
+  // Theme colors
+  const bgMain = '#0f1422';
+  const bgSidebar = '#181f36';
+  const accent = '#3b82f6'; // blue
+  const textPrimary = '#fff';
+  const textSecondary = '#cbd5e1';
+  const sidebarWidth = 240;
 
   useEffect(() => {
-    const styleTag = document.createElement('style');
-    styleTag.innerHTML = `.wallet-adapter-button { height: auto !important; padding: 8px 12px !important; font-size: 14px !important; max-width: 200px !important; }`;
-    document.head.appendChild(styleTag);
-    return () => {
-      if (document.head.contains(styleTag)) {
-        document.head.removeChild(styleTag);
-      }
-    };
-  }, []);
+    if (activeSection === 'buy') {
+      fetchListings();
+    }
+    if (activeSection === 'sell') {
+      fetchMyListings();
+    }
+    if (activeSection === 'orders' && publicKey) {
+      fetchMyPurchases();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection, publicKey]);
 
-  useEffect(() => {
-    if (status === "authenticated") fetchListings();
-  }, [status]);
-
-  const fetchListings = async () => {
+  async function fetchListings() {
+    setLoadingListings(true);
+    setError(null);
     try {
-      setIsLoading(true);
-      const response = await fetch("/api/listings");
-      if (!response.ok) {
-        throw new Error(`Failed to fetch listings: ${response.statusText}`);
-      }
-      const data = await response.json();
-      setListings(data?.listings || []);
-    } catch (fetchError) {
-      console.error("Fetch listings error:", fetchError);
-      setError("Failed to load energy listings. Please try again later.");
+      // TODO: Replace with the correct endpoint if needed
+      const res = await fetch('/api/listings/all');
+      if (!res.ok) throw new Error('Failed to fetch listings');
+      const data = await res.json();
+      setListings(data.listings || []);
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch listings');
     } finally {
-      setIsLoading(false);
+      setLoadingListings(false);
     }
-  };
+  }
 
-  const executeTransaction = async (listingId: string, units: number, pricePerUnit: number) => {
-    if (!wallet || !wallet.publicKey) {
-      throw new Error('Wallet not connected');
-    }
-
+  async function fetchMyListings() {
+    setLoadingMyListings(true);
+    setMyListingsError(null);
     try {
-      const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com");
-      
-      const anchorWallet = {
-        publicKey: wallet.publicKey,
-        signTransaction: wallet.signTransaction ? wallet.signTransaction : (/* tx */) => {
-            console.error("Attempted to use signTransaction, but the connected wallet does not support it.");
-            return Promise.reject(new Error("signTransaction is not supported by this wallet."));
-        },
-        signAllTransactions: wallet.signAllTransactions ? wallet.signAllTransactions : (/* txs */) => {
-            console.error("Attempted to use signAllTransactions, but the connected wallet does not support it.");
-            return Promise.reject(new Error("signAllTransactions is not supported by this wallet."));
-        },
-      } as Wallet;
-
-      const provider = new AnchorProvider(connection, anchorWallet, {
-        commitment: 'confirmed',
-      });
-
-      let programAddress;
-      if ((idl as any).address) {
-        programAddress = new PublicKey((idl as any).address);
-      } else if (idl.metadata && (idl.metadata as any).address) {
-        programAddress = new PublicKey((idl.metadata as any).address);
-      } else {
-        console.warn('Program address not found in IDL, continuing with direct transfer.');
-      }
-      const program = programAddress ? new Program(idl, programAddress, provider) : null;
-      if(program) console.log("Program Initialized (though maybe not used for transfer)");
-
-      const buyerTokenAccount = await getAssociatedTokenAddress(
-        BIJLEE_TOKEN_MINT,
-        wallet.publicKey
-      );
-
-      console.log("Checking seller token account...");
-      const { getOrCreateAssociatedTokenAccount } = await import('@solana/spl-token');
-
-      const pricePerUnitInt = Math.floor(pricePerUnit);
-
-      console.log("--- Pre-Transaction Data ---");
-      console.log("Listing ID:", listingId);
-      console.log("Units:", units);
-      console.log("Price Per Unit (Int):", pricePerUnitInt);
-      console.log("Buyer Pubkey:", wallet.publicKey.toBase58());
-      console.log("Buyer Token Acc Address:", buyerTokenAccount.toBase58());
-      console.log("Seller Pubkey:", PAYMENT_RECEIVER.toBase58());
-      console.log("BIJLEE Token Mint:", BIJLEE_TOKEN_MINT.toBase58());
-      console.log("--- End Pre-Transaction Data ---");
-
-      console.log("SIMPLIFIED: Direct token transfer");
-
-      try {
-        const DECIMALS = 2;
-        const totalAmount = units * pricePerUnitInt * Math.pow(10, DECIMALS);
-        console.log("Total amount to transfer (with decimals):", totalAmount);
-
-        console.log("Getting or creating buyer token account...");
-        const buyerAccount = await getOrCreateAssociatedTokenAccount(
-          connection,
-          anchorWallet as any,
-          BIJLEE_TOKEN_MINT,
-          wallet.publicKey
-        );
-        console.log("Buyer account:", buyerAccount.address.toBase58());
-
-        console.log("Getting or creating seller token account...");
-        const sellerAccount = await getOrCreateAssociatedTokenAccount(
-          connection,
-          anchorWallet as any,
-          BIJLEE_TOKEN_MINT,
-          PAYMENT_RECEIVER
-        );
-        console.log("Seller account:", sellerAccount.address.toBase58());
-
-        if (!sellerAccount.owner.equals(PAYMENT_RECEIVER)) {
-            throw new Error("Created seller account is not properly owned by the seller!");
-        }
-
-        console.log("Transferring tokens...");
-        const transferTx = new Transaction();
-        transferTx.add(
-          createTransferInstruction(
-            buyerAccount.address,
-            sellerAccount.address,
-            wallet.publicKey,
-            totalAmount
-          )
-        );
-
-        transferTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-        transferTx.feePayer = wallet.publicKey;
-
-        if (!wallet.signTransaction) {
-          throw new Error("Wallet does not support signTransaction");
-        }
-        console.log("Signing transaction...");
-        const signedTransaction = await wallet.signTransaction(transferTx);
-
-        console.log("Sending signed transaction...");
-        const txid = await connection.sendRawTransaction(signedTransaction.serialize());
-        console.log("Transfer transaction sent:", txid);
-
-        console.log("Confirming transaction...");
-        const confirmation = await connection.confirmTransaction(txid, 'confirmed');
-        if (confirmation.value.err) {
-          console.error("Transaction Confirmation Error:", confirmation.value.err);
-          try {
-            const txDetails = await connection.getTransaction(txid, {commitment: 'confirmed', maxSupportedTransactionVersion: 0});
-            console.error("Failed Transaction Logs:", txDetails?.meta?.logMessages);
-          } catch (logError) {
-            console.error("Could not fetch logs for failed transaction:", logError);
-          }
-          throw new Error("Transaction failed: " + JSON.stringify(confirmation.value.err));
-        }
-
-        console.log("Transaction confirmed successfully!");
-        return txid;
-
-      } catch (directError) {
-        console.error('Direct transfer failed:', directError);
-        if (directError instanceof Error) {
-            if (directError.message.includes("Account does not exist")) {
-                setError("Token account error. Please ensure accounts exist or try again.");
-            } else if (directError.message.includes("insufficient funds")) {
-                setError("Insufficient BIJLEE tokens for purchase.");
-            } else {
-                setError(`Transfer failed: ${directError.message}`);
-            }
-        } else {
-            setError("An unknown error occurred during the transfer.");
-        }
-        throw directError;
-      }
-
-    } catch (error) {
-      console.error("Transaction setup error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to initiate purchase";
-      setError(errorMessage);
+      const res = await fetch('/api/listings/all');
+      if (!res.ok) throw new Error('Failed to fetch all listings');
+      const data = await res.json();
+      setMyListings(data.listings || []);
+    } catch (err: any) {
+      setMyListingsError(err.message || 'Failed to fetch all listings');
     } finally {
-      setProcessingPurchase(null);
+      setLoadingMyListings(false);
     }
-    return undefined;
-  };
+  }
 
-  const handlePurchase = async (listingId: string) => {
-    if (!wallet.publicKey) {
-      setError("Please connect your wallet first");
+  async function fetchMyPurchases() {
+    if (!publicKey) return;
+    
+    setLoadingPurchases(true);
+    setPurchasesError(null);
+    try {
+      const res = await fetch(`/api/purchases?wallet=${publicKey.toBase58()}`);
+      if (!res.ok) throw new Error('Failed to fetch your purchases');
+      const data = await res.json();
+      setMyPurchases(data.purchases || []);
+    } catch (err: any) {
+      setPurchasesError(err.message || 'Failed to fetch your purchases');
+    } finally {
+      setLoadingPurchases(false);
+    }
+  }
+
+  async function handleDeleteListing(id: string) {
+    setDeleteLoading(id);
+    try {
+      const res = await fetch(`/api/listings/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete listing');
+      setMyListings(listings => listings.filter(l => l._id !== id));
+    } catch {
+      alert('Failed to delete listing');
+    } finally {
+      setDeleteLoading(null);
+    }
+  }
+
+  async function handleBuy(listing: Listing) {
+    setBuyError(null);
+    setBuySuccess(null);
+    if (!connected || !publicKey) {
+      setBuyError('Please connect your wallet.');
       return;
     }
-
-    const amount = purchaseAmount[listingId];
-    if (!amount || amount <= 0) {
-      setError("Please enter a valid amount");
+    const amountStr = amountInputs[listing._id];
+    if (!amountStr) {
+      setBuyError('Please enter an amount.');
       return;
     }
-
-    const listing = listings.find(l => l._id === listingId);
-    if (!listing) {
-      setError("Listing not found");
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      setBuyError('Invalid amount.');
       return;
     }
-
     if (amount > listing.availableUnits) {
-      setError(`Only ${listing.availableUnits} units available for purchase`);
+      setBuyError('Amount exceeds available units.');
       return;
     }
-
-    // Add logging for values before transaction
-    console.log(`handlePurchase: listingId=${listingId}, amount=${amount}`);
-
-    if (!listing || amount <= 0) {
-      setError("Invalid listing or amount");
-      setProcessingPurchase(null);
-      return;
-    }
-
-    setError(null); // Clear previous errors
-    setSuccessMessage(null); // Clear previous success messages
-    setProcessingPurchase(listingId);
-
+    setBuyLoading(listing._id);
     try {
-      const tx = await executeTransaction(listingId, amount, listing.pricePerUnit);
-
-      // Only update history and show success if tx is a valid string (transaction ID)
-      if (typeof tx === 'string' && tx) {
-        // Update purchase history
-        setPurchaseHistory([{
-          id: Date.now().toString(),
-          listingId,
-          listingName: listing.name,
-          amount,
-          pricePerUnit: listing.pricePerUnit,
-          total: amount * listing.pricePerUnit * Math.pow(10, 2), // Use 10^2 multiplier
-          date: new Date().toISOString(),
-          transactionHash: tx,
-          status: "completed"
-        }, ...purchaseHistory]);
-
-        // Reset purchase amount
-        setPurchaseAmount({ ...purchaseAmount, [listingId]: 0 });
-
-        // Set success message
-        setSuccessMessage("Purchase completed successfully!");
-
-        // Automatically show the purchase history
-        setShowHistory(true);
-
-        // Clear success message after 5 seconds
-        setTimeout(() => {
-          setSuccessMessage(null);
-        }, 5000);
-      } else {
-        // If tx is undefined, an error likely occurred in executeTransaction and was handled there
-        console.log("Transaction did not return a valid ID, likely failed before sending.");
-        // setError might already be set by executeTransaction's catch block
+      // Log payload for debugging
+      const payload: {
+        listingId: string;
+        quantity: number;
+        buyerWalletAddress: string;
+      } = {
+        listingId: listing._id,
+        quantity: amount,
+        buyerWalletAddress: publicKey.toBase58(),
+      };
+      console.log('Sending to /api/purchase:', payload);
+      // 1. Call backend API to reserve units and get transaction details
+      const res = await fetch('/api/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data: {
+        success: boolean;
+        error?: string;
+        transaction: {
+          listingId: string;
+          amount: number;
+          pricePerUnit: number;
+        };
+        purchaseId: string;
+      } = await res.json();
+      console.log('Response from /api/purchase:', data);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to reserve units');
       }
-
-    } catch (error) {
-      // This catch block primarily catches errors re-thrown from executeTransaction
-      console.error("Error during handlePurchase -> executeTransaction:", error);
-      // setError is likely already set within executeTransaction's catch blocks
-      // If not, set a generic error here:
-      if (!error) { // Check if error state is already set
-          const errorMessage = error instanceof Error ? error.message : "Failed to complete purchase";
-          setError(errorMessage);
+      // 2. Prepare Anchor provider and program
+      console.log('IDL loaded in frontend:', idl);
+      console.log('IDL events field:', idl.events);
+      console.log('Program ID:', PROGRAM_ID.toString());
+      
+      try {
+        // BYPASS ANCHOR JS WITH DIRECT WEB3.JS TRANSACTION
+        console.log('Bypassing Anchor JS with direct web3.js transaction...');
+        
+        // Get the latest blockhash
+        const blockhash = await connection.getLatestBlockhash();
+        
+        // Create a new transaction
+        const transaction = new Transaction({
+          feePayer: publicKey,
+          recentBlockhash: blockhash.blockhash
+        });
+        
+        // Create instruction data buffer manually
+        // Discriminator for processPurchase (first 8 bytes)
+        const discriminator = new Uint8Array([38, 233, 48, 62, 162, 120, 177, 244]);
+        
+        // Encode listing_id as string, but truncate to max 32 bytes to prevent buffer overflow
+        const truncatedListingId = data.transaction.listingId.substring(0, 32);
+        const listingIdBytes = new TextEncoder().encode(truncatedListingId);
+        const listingIdLen = new Uint8Array(4);
+        new DataView(listingIdLen.buffer).setUint32(0, listingIdBytes.length, true);
+        
+        // Encode units and price_per_unit as u64 (8 bytes each)
+        const unitsBytes = new Uint8Array(8);
+        const pricePerUnitBytes = new Uint8Array(8);
+        new DataView(unitsBytes.buffer).setBigUint64(0, BigInt(data.transaction.amount), true);
+        new DataView(pricePerUnitBytes.buffer).setBigUint64(0, BigInt(data.transaction.pricePerUnit), true);
+        
+        // Combine all data
+        const instructionData = Buffer.concat([
+          discriminator,
+          listingIdLen, Buffer.from(listingIdBytes),
+          unitsBytes,
+          pricePerUnitBytes
+        ]);
+        
+        // Create accounts
+        const buyerTokenAccount = await getAssociatedTokenAddress(BIJLEE_TOKEN_MINT, publicKey);
+        const paymentReceiverPubkey = PAYMENT_RECEIVER;
+        const paymentReceiverTokenAccount = await getAssociatedTokenAddress(BIJLEE_TOKEN_MINT, paymentReceiverPubkey);
+        
+        // Create instruction
+        const instruction = {
+          programId: PROGRAM_ID,
+          keys: [
+            { pubkey: publicKey, isSigner: true, isWritable: true },
+            { pubkey: buyerTokenAccount, isSigner: false, isWritable: true },
+            { pubkey: paymentReceiverPubkey, isSigner: false, isWritable: false },
+            { pubkey: paymentReceiverTokenAccount, isSigner: false, isWritable: true },
+            { pubkey: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'), isSigner: false, isWritable: false },
+            { pubkey: PublicKey.default, isSigner: false, isWritable: false },
+          ],
+          data: instructionData
+        };
+        
+        // Add instruction to transaction
+        transaction.add(instruction);
+        
+        // Send transaction
+        const sig = await sendTransaction(transaction, connection);
+        console.log('Transaction sent with signature:', sig);
+        
+        // Update purchase with transaction hash
+        const updateRes = await fetch('/api/purchase', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            purchaseId: data.purchaseId,
+            transactionHash: sig,
+            status: 'completed'
+          }),
+        });
+        
+        const updateData = await updateRes.json();
+        console.log('Purchase updated:', updateData);
+        
+        setBuySuccess(`Transaction sent: ${sig}`);
+        fetchListings();
+        
+        // If we're on the orders page, refresh orders
+        if (activeSection === 'orders') {
+          fetchMyPurchases();
+        }
+        
+        return; // Skip regular Anchor code below
+      } catch (err: any) {
+        console.error('Direct transaction error:', err);
+        setBuyError(err.message || 'Direct transaction failed');
+        setBuyLoading(null);
+        return; // Skip regular Anchor code below
       }
+      
+    } catch (err: any) {
+      console.error('Anchor transaction error:', err);
+      setBuyError(err.message || 'Transaction failed');
     } finally {
-      setProcessingPurchase(null);
+      setBuyLoading(null);
+    }
+  }
+
+  const getEnergyTypeColor = () => '#f59e0b';
+  const getEnergyTypeIcon = () => '☀️';
+
+  // Copy wallet address
+  const handleCopyWallet = () => {
+    if (publicKey) {
+      navigator.clipboard.writeText(publicKey.toBase58());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
     }
   };
-
-  if (status === "unauthenticated") {
-    router.push("/auth");
-    return null;
-  }
-
-  if (status === "loading") {
-    return <div className="flex justify-center items-center min-h-screen bg-[#0f1422]">
-      <div className="w-12 h-12 border-t-2 border-blue-600 border-solid rounded-full animate-spin"></div>
-      <p className="ml-3 text-white">Loading...</p>
-    </div>;
-  }
 
   return (
-    <div className="min-h-screen bg-[#0f1422] text-white">
-      {/* Navigation Bar */}
-      <nav className="bg-gray-900/90 backdrop-blur-md border-b border-blue-500/20">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center">
-              <Link href="/" className="text-xl font-bold text-blue-400 hover:text-blue-300 transition-colors">
-                EnergyPro
-              </Link>
-            </div>
-            <div className="flex items-center">
-              {session?.user?.name && (
-                <span className="text-gray-300 mr-4">
-                  Welcome, {session.user.name}
-                </span>
-              )}
-            <button 
-                onClick={() => signOut()}
-                className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+    <div style={{ display: 'flex', minHeight: '100vh', background: bgMain, color: textPrimary, fontFamily: 'Inter, Segoe UI, Arial, sans-serif' }}>
+      <aside
+        style={{
+          width: sidebarWidth,
+          background: bgSidebar,
+          padding: '2.5rem 1.5rem',
+          minHeight: '100vh',
+          boxShadow: '2px 0 8px 0 rgba(0,0,0,0.12)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+        }}
+      >
+        <div 
+          style={{ fontWeight: 700, fontSize: 28, marginBottom: 40, letterSpacing: 1, color: accent, cursor: 'pointer' }}
+          onClick={() => router.push('/')}
+        >
+          EnergyPro
+          <div style={{ height: 3, width: 40, background: accent, borderRadius: 2, marginTop: 4 }} />
+        </div>
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%' }}>
+          {[
+            { key: 'home', label: 'Home' },
+            { key: 'buy', label: 'Buy Energy' },
+            { key: 'sell', label: 'Sell Energy' },
+            { key: 'orders', label: 'My Orders' },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveSection(tab.key as any)}
+              style={{
+                background: activeSection === tab.key ? accent : 'transparent',
+                color: activeSection === tab.key ? '#fff' : textSecondary,
+                border: 'none',
+                borderRadius: 8,
+                textAlign: 'left',
+                fontSize: 18,
+                fontWeight: 500,
+                padding: '10px 18px',
+                cursor: 'pointer',
+                transition: 'background 0.2s, color 0.2s',
+                marginRight: 0,
+                boxShadow: activeSection === tab.key ? '0 2px 8px 0 rgba(59,130,246,0.15)' : 'none',
+              }}
             >
-              Sign Out
+              {tab.label}
             </button>
-          </div>
+          ))}
+        </nav>
+        <button
+          onClick={() => signOut()}
+          style={{
+            marginTop: 32,
+            background: '#232b47',
+            color: '#f87171',
+            border: 'none',
+            borderRadius: 8,
+            padding: '10px 18px',
+            fontWeight: 600,
+            fontSize: 16,
+            cursor: 'pointer',
+            width: '100%',
+            boxShadow: '0 2px 8px 0 rgba(59,130,246,0.08)',
+            transition: 'background 0.2s, color 0.2s',
+          }}
+        >
+          Sign Out
+        </button>
+        <div style={{ flex: 1 }} />
+        <div style={{ color: textSecondary, fontSize: 13, marginTop: 40, opacity: 0.7 }}>
+          © {new Date().getFullYear()} EnergyPro
         </div>
+      </aside>
+      <main
+        style={{
+          flex: 1,
+          padding: '2.5rem 2.5rem',
+          background: bgMain,
+          minHeight: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
+          <WalletButtonClient />
+          {connected && publicKey && (
+            <span style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: '#232b47',
+              color: accent,
+              fontFamily: 'Menlo, monospace',
+              fontSize: 15,
+              borderRadius: 20,
+              padding: '6px 16px',
+              boxShadow: '0 2px 8px 0 rgba(59,130,246,0.10)',
+              border: '1px solid #334155',
+              transition: 'background 0.2s',
+            }}>
+              <FaMapMarkerAlt style={{ color: '#3b82f6', fontSize: 16 }} />
+              <span>{publicKey.toBase58().slice(0, 6)}...{publicKey.toBase58().slice(-4)}</span>
+              <button
+                onClick={handleCopyWallet}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#7dd3fc',
+                  cursor: 'pointer',
+                  padding: 0,
+                  marginLeft: 2,
+                  fontSize: 15,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+                title="Copy address"
+              >
+                <FaCopy style={{ fontSize: 15 }} />
+              </button>
+              <a
+                href={`https://explorer.solana.com/address/${publicKey.toBase58()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#7dd3fc', marginLeft: 2, display: 'flex', alignItems: 'center' }}
+                title="View on Solana Explorer"
+              >
+                <FaExternalLinkAlt style={{ fontSize: 14 }} />
+              </a>
+              {copied && <span style={{ color: '#22c55e', fontSize: 13, marginLeft: 6 }}>Copied!</span>}
+            </span>
+          )}
         </div>
-      </nav>
-
-      <div className="px-6 py-8 max-w-7xl mx-auto">
-        <h2 className="text-2xl font-bold mb-6">Energy Marketplace</h2>
-
-        {error && (
-          <div className="bg-red-900/70 backdrop-blur-md p-4 rounded-lg border border-red-500/30 mb-6 text-white">
-            {error}
-          </div>
-        )}
-
-        {successMessage && (
-          <div className="bg-green-900/70 backdrop-blur-md p-4 rounded-lg border border-green-500/30 mb-6 text-white">
-            {successMessage}
-          </div>
-        )}
-
-        <div className="bg-gray-900/70 backdrop-blur-md p-4 rounded-lg shadow-md border border-blue-500/20 mb-8">
-          <div className="flex justify-between items-center">
+        <div style={{
+          background: bgSidebar,
+          borderRadius: 18,
+          boxShadow: '0 2px 16px 0 rgba(0,0,0,0.10)',
+          padding: '2.5rem 2rem',
+          minHeight: 400,
+          marginBottom: 24,
+        }}>
+          {activeSection === 'home' && (
             <div>
-              <h3 className="text-lg font-semibold text-white">Solana Wallet</h3>
-              <p className="text-sm text-gray-400">Connect your wallet to buy Bijlee energy units.</p>
-            </div>
-            <div style={{ maxWidth: '200px' }}>
-              <WalletButton />
-              {connected && (
-                <p className="mt-2 text-sm text-green-400 text-center">
-                  <span className="inline-block w-2 h-2 bg-green-400 rounded-full mr-1"></span>
-                  {wallet.publicKey?.toString().slice(0, 6)}...{wallet.publicKey?.toString().slice(-4)}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {isLoading ? (
-          <p className="text-gray-400">Loading listings...</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-              {listings.map(listing => (
-                <div key={listing._id} className="bg-gray-800/50 p-6 rounded-lg border border-gray-700/50">
-                  <h3 className="text-xl font-semibold text-white mb-2">{listing.name}</h3>
-                  <p className="text-gray-300 mb-2">{listing.location}</p>
-                  <p className="text-blue-400 font-medium mb-2">{listing.pricePerUnit.toFixed(2)} BIJLEE per unit</p>
-                  <p className="text-sm text-gray-400 mb-4">Available: {listing.availableUnits}</p>
-                  <div className="flex items-center mb-3">
-                    <input
-                      type="number"
-                      min="1"
-                      max={listing.availableUnits}
-                      value={purchaseAmount[listing._id] || ''}
-                      onChange={(e) => setPurchaseAmount({
-                        ...purchaseAmount,
-                        [listing._id]: parseInt(e.target.value) || 0
-                      })}
-                      className="bg-gray-700 border border-gray-600 rounded-l-md px-3 py-2 text-white w-24"
-                      placeholder="Units"
-                    />
-                    <button
-                      onClick={() => handlePurchase(listing._id)}
-                      disabled={processingPurchase === listing._id || !connected}
-                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white rounded-r-md px-4 py-2"
-                    >
-                      {processingPurchase === listing._id ? 'Processing...' : 'Buy Now'}
-                    </button>
-                  </div>
-                  {purchaseAmount[listing._id] > 0 && (
-                    <p className="text-sm text-right text-white">
-                      Total: {(purchaseAmount[listing._id] * listing.pricePerUnit * Math.pow(10, 2)).toFixed(0)} BIJLEE tokens
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Purchase History Section */}
-            <div className="mt-8">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-semibold text-white">Purchase History</h3>
-                <button 
-                  onClick={() => setShowHistory(!showHistory)} 
-                  className="text-blue-400 hover:text-blue-300 flex items-center"
-                >
-                  {showHistory ? 'Hide' : 'Show'} History
-                  <span className="ml-1">{showHistory ? '▲' : '▼'}</span>
-                </button>
+              <h2 style={{ fontSize: 32, fontWeight: 800, marginBottom: 10, color: '#fff', letterSpacing: 1 }}>Welcome to EnergyPro</h2>
+              <div style={{ color: textSecondary, fontSize: 18, marginBottom: 28, fontWeight: 500 }}>
+                Your decentralized marketplace for renewable energy.
               </div>
-              
-              {showHistory && (
-                <>
-                  {purchaseHistory.length === 0 ? (
-                    <p className="text-gray-400">No purchase history yet.</p>
-                  ) : (
-                    <div className="bg-gray-800/50 rounded-lg border border-gray-700/50 overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead className="bg-gray-700/50">
-                          <tr>
-                            <th className="py-3 px-4 text-left">Date</th>
-                            <th className="py-3 px-4 text-left">Listing</th>
-                            <th className="py-3 px-4 text-left">Units</th>
-                            <th className="py-3 px-4 text-left">Total</th>
-                            <th className="py-3 px-4 text-left">Transaction</th>
-                            <th className="py-3 px-4 text-left">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {purchaseHistory.map(purchase => (
-                            <tr key={purchase.id} className="border-t border-gray-700/50">
-                              <td className="py-3 px-4">{new Date(purchase.date).toLocaleString()}</td>
-                              <td className="py-3 px-4">{purchase.listingName}</td>
-                              <td className="py-3 px-4">{purchase.amount}</td>
-                              <td className="py-3 px-4">{purchase.total.toFixed(0)} BIJLEE</td>
-                              <td className="py-3 px-4">
-                                <a 
-                                  href={`https://explorer.solana.com/tx/${purchase.transactionHash}?cluster=devnet`} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-400 hover:text-blue-300"
-                                >
-                                  {purchase.transactionHash.slice(0, 8)}...
-                                </a>
-                              </td>
-                              <td className="py-3 px-4">
-                                <span className="inline-block px-2 py-1 rounded-full text-xs bg-green-900/50 text-green-400">
-                                  {purchase.status}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </>
+              <div style={{ color: '#f59e0b', fontWeight: 600, fontSize: 15, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ background: '#f59e0b', color: '#fff', borderRadius: 8, padding: '2px 10px', fontWeight: 700, fontSize: 13 }}>DUMMY DATA</span>
+                <span>All locations and statistics below are for demonstration purposes only.</span>
+              </div>
+              {/* Statistics Cards */}
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', 
+                gap: 20, 
+                marginBottom: 30 
+              }}>
+                <div style={{
+                  background: '#232b47',
+                  borderRadius: 14,
+                  padding: '24px 20px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  fontWeight: 600,
+                }}>
+                  <FaBolt style={{ color: '#f59e0b', fontSize: 28 }} />
+                  <div style={{ fontSize: 18, color: textSecondary }}>Total Capacity</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: '#f59e0b' }}>{statistics.totalCapacity} kWh</div>
+                </div>
+                <div style={{
+                  background: '#232b47',
+                  borderRadius: 14,
+                  padding: '24px 20px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  fontWeight: 600,
+                }}>
+                  <FaUserFriends style={{ color: '#3b82f6', fontSize: 28 }} />
+                  <div style={{ fontSize: 18, color: textSecondary }}>Active Sellers</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: '#3b82f6' }}>{statistics.activeSellers}</div>
+                </div>
+                <div style={{
+                  background: '#232b47',
+                  borderRadius: 14,
+                  padding: '24px 20px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  fontWeight: 600,
+                }}>
+                  <FaExchangeAlt style={{ color: '#10b981', fontSize: 28 }} />
+                  <div style={{ fontSize: 18, color: textSecondary }}>Transactions</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: '#10b981' }}>{statistics.completedTransactions}</div>
+                </div>
+                <div style={{
+                  background: '#232b47',
+                  borderRadius: 14,
+                  padding: '24px 20px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  fontWeight: 600,
+                }}>
+                  <FaTag style={{ color: '#8b5cf6', fontSize: 28 }} />
+                  <div style={{ fontSize: 18, color: textSecondary }}>Avg. Price</div>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: '#8b5cf6' }}>{statistics.averagePrice} BIJLEE</div>
+                </div>
+              </div>
+              <h3 style={{ fontSize: 22, fontWeight: 700, marginBottom: 16, color: '#fff' }}>Energy Locations (Demo)</h3>
+              <div style={{
+                display: 'flex',
+                overflowX: 'auto',
+                gap: 24,
+                paddingBottom: 8,
+                marginBottom: 10,
+                scrollbarWidth: 'thin',
+              }}>
+                {energyLocations.map(loc => (
+                  <div key={loc.id} style={{
+                    minWidth: 270,
+                    background: '#181f36',
+                    borderRadius: 16,
+                    boxShadow: '0 2px 8px 0 rgba(59,130,246,0.10)',
+                    padding: '22px 18px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    gap: 10,
+                    border: '2px solid #232b47',
+                    transition: 'border 0.2s, box-shadow 0.2s',
+                    position: 'relative',
+                  }}>
+                    <span style={{ position: 'absolute', top: 12, right: 12, background: '#f59e0b', color: '#fff', borderRadius: 8, padding: '2px 10px', fontWeight: 700, fontSize: 12 }}>DUMMY</span>
+                    <div style={{ fontSize: 32 }}>{getEnergyTypeIcon()}</div>
+                    <div style={{ fontWeight: 700, fontSize: 18, color: '#fff', marginBottom: 2 }}>{loc.name}</div>
+                    <div style={{ color: getEnergyTypeColor(), fontWeight: 600, fontSize: 15, textTransform: 'capitalize' }}>{loc.type} energy</div>
+                    <div style={{ color: textSecondary, fontSize: 15 }}>Capacity: <span style={{ color: '#fff', fontWeight: 600 }}>{loc.capacity} kWh</span></div>
+                    <div style={{ color: textSecondary, fontSize: 15 }}>Lat/Lng: <span style={{ color: '#fff', fontWeight: 600 }}>{loc.lat.toFixed(2)}, {loc.lng.toFixed(2)}</span></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {activeSection === 'buy' && (
+            <div>
+              <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24, color: '#fff' }}>Buy Energy</h2>
+              {loadingListings ? (
+                <p style={{ color: textSecondary }}>Loading listings...</p>
+              ) : error ? (
+                <p style={{ color: '#f87171' }}>{error}</p>
+              ) : listings.length === 0 ? (
+                <p style={{ color: textSecondary }}>No energy listings available right now.</p>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 24 }}>
+                  {listings.map(listing => {
+                    const amountValue = amountInputs[listing._id] || '';
+                    const amountNum = Number(amountValue);
+                    const isAmountInvalid = !amountValue || isNaN(amountNum) || amountNum <= 0 || amountNum > listing.availableUnits;
+                    return (
+                      <div key={listing._id} style={{
+                        background: '#232b47',
+                        borderRadius: 14,
+                        boxShadow: '0 2px 8px 0 rgba(59,130,246,0.08)',
+                        padding: '1.5rem 1.25rem',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                      }}>
+                        <div style={{ fontWeight: 600, fontSize: 20, color: textPrimary }}>{listing.name || 'Energy Listing'}</div>
+                        <div style={{ color: accent, fontWeight: 500, fontSize: 16 }}>{listing.pricePerUnit} BIJLEE / kWh</div>
+                        <div style={{ color: textSecondary, fontSize: 15 }}>Available: {listing.availableUnits} kWh</div>
+                        <div style={{ color: textSecondary, fontSize: 15 }}>Location: {listing.location}</div>
+                        <div style={{ color: textSecondary, fontSize: 15 }}>Seller: <span style={{ color: '#7dd3fc' }}>{listing.sellerId}</span></div>
+                        {connected ? (
+                          <>
+                            <input
+                              type="number"
+                              min="1"
+                              max={listing.availableUnits}
+                              placeholder="Amount to buy (kWh)"
+                              value={amountValue}
+                              onChange={e => setAmountInputs(inputs => ({ ...inputs, [listing._id]: e.target.value }))}
+                              style={{
+                                background: '#181f36',
+                                color: '#fff',
+                                border: '1px solid #3b82f6',
+                                borderRadius: 8,
+                                padding: '8px 10px',
+                                fontSize: 15,
+                                marginTop: 8,
+                                marginBottom: 4,
+                              }}
+                            />
+                            <button
+                              onClick={() => handleBuy(listing)}
+                              disabled={buyLoading === listing._id || isAmountInvalid}
+                              style={{
+                                marginTop: 4,
+                                background: accent,
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 8,
+                                padding: '10px 0',
+                                fontWeight: 600,
+                                fontSize: 16,
+                                cursor: buyLoading === listing._id || isAmountInvalid ? 'not-allowed' : 'pointer',
+                                transition: 'background 0.2s',
+                                boxShadow: '0 2px 8px 0 rgba(59,130,246,0.10)',
+                              }}
+                            >
+                              {buyLoading === listing._id ? 'Processing...' : 'Buy'}
+                            </button>
+                          </>
+                        ) : (
+                          <div style={{ color: '#f87171', fontSize: 15, marginTop: 8 }}>
+                            Please connect your wallet to buy.
+                          </div>
+                        )}
+                        {isAmountInvalid && amountValue && connected && (
+                          <div style={{ color: '#f87171', fontSize: 14 }}>
+                            {amountNum > listing.availableUnits
+                              ? 'Amount exceeds available units.'
+                              : 'Enter a valid amount.'}
+                          </div>
+                        )}
+                        {buyError && buyLoading === listing._id && <div style={{ color: '#f87171', fontSize: 15 }}>{buyError}</div>}
+                        {buySuccess && buyLoading === listing._id && <div style={{ color: '#22c55e', fontSize: 15 }}>{buySuccess}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
-          </>
-        )}
-      </div>
+          )}
+          {activeSection === 'sell' && (
+            <div>
+              <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24, color: '#fff' }}>Sell Energy</h2>
+              <CreateListingForm onListingCreated={fetchMyListings} sellerId={session?.user?.email || ''} />
+              <div style={{ marginTop: 40 }}>
+                <h3 style={{ fontSize: 22, fontWeight: 600, marginBottom: 18, color: '#fff' }}>My Listings</h3>
+                {loadingMyListings ? (
+                  <p style={{ color: textSecondary }}>Loading your listings...</p>
+                ) : myListingsError ? (
+                  <p style={{ color: '#f87171' }}>{myListingsError}</p>
+                ) : myListings.length === 0 ? (
+                  <p style={{ color: textSecondary }}>You have no listings yet.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    {myListings.map(listing => (
+                      <div key={listing._id} style={{
+                        background: '#232b47',
+                        borderRadius: 12,
+                        boxShadow: '0 2px 8px 0 rgba(59,130,246,0.08)',
+                        padding: '1.25rem 1rem',
+                        display: 'flex',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                      }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: 18, color: textPrimary }}>{listing.name}</div>
+                          <div style={{ color: textSecondary, fontSize: 15 }}>Location: {listing.location}</div>
+                          <div style={{ color: accent, fontWeight: 500, fontSize: 15 }}>Price: {listing.pricePerUnit} BIJLEE/kWh</div>
+                          <div style={{ color: textSecondary, fontSize: 15 }}>Available: {listing.availableUnits} / {listing.maxUnitsAvailable} kWh</div>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteListing(listing._id!)}
+                          disabled={deleteLoading === listing._id}
+                          style={{
+                            background: '#ef4444',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 8,
+                            padding: '8px 18px',
+                            fontWeight: 600,
+                            fontSize: 15,
+                            cursor: deleteLoading === listing._id ? 'not-allowed' : 'pointer',
+                            marginLeft: 12,
+                          }}
+                        >
+                          {deleteLoading === listing._id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {activeSection === 'orders' && (
+            <div>
+              <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24, color: '#fff' }}>My Orders</h2>
+              
+              {!connected ? (
+                <p style={{ color: textSecondary, fontSize: 18 }}>Please connect your wallet to view your orders.</p>
+              ) : loadingPurchases ? (
+                <p style={{ color: textSecondary }}>Loading your orders...</p>
+              ) : purchasesError ? (
+                <p style={{ color: '#f87171' }}>{purchasesError}</p>
+              ) : myPurchases.length === 0 ? (
+                <p style={{ color: textSecondary }}>You have no orders yet.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  {myPurchases.map(purchase => (
+                    <div key={purchase._id || purchase.id} style={{
+                      background: '#232b47',
+                      borderRadius: 12,
+                      boxShadow: '0 2px 8px 0 rgba(59,130,246,0.08)',
+                      padding: '1.25rem 1rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 600, fontSize: 18, color: textPrimary }}>{purchase.listingName}</div>
+                        <div style={{ 
+                          backgroundColor: purchase.status === 'completed' ? '#22c55e' : '#f59e0b',
+                          color: 'white',
+                          padding: '4px 10px',
+                          borderRadius: 8,
+                          fontSize: 14,
+                          fontWeight: 600,
+                        }}>
+                          {purchase.status.charAt(0).toUpperCase() + purchase.status.slice(1)}
+                        </div>
+                      </div>
+                      <div style={{ color: textSecondary, fontSize: 15 }}>Amount: {purchase.amount} kWh</div>
+                      <div style={{ color: accent, fontWeight: 500, fontSize: 15 }}>Price: {purchase.pricePerUnit} BIJLEE/kWh</div>
+                      <div style={{ color: accent, fontWeight: 500, fontSize: 15 }}>Total: {purchase.total} BIJLEE</div>
+                      <div style={{ color: textSecondary, fontSize: 15 }}>Date: {new Date(purchase.date).toLocaleString()}</div>
+                      <div style={{ color: textSecondary, fontSize: 14, wordBreak: 'break-all' }}>
+                        Transaction: <a 
+                          href={`https://explorer.solana.com/tx/${purchase.transactionHash}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          style={{ color: '#7dd3fc' }}
+                        >
+                          {purchase.transactionHash.substring(0, 12)}...
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              <button 
+                onClick={fetchMyPurchases} 
+                style={{
+                  marginTop: 20,
+                  background: accent,
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '10px 18px',
+                  fontWeight: 600,
+                  fontSize: 16,
+                  cursor: 'pointer',
+                  display: connected ? 'block' : 'none',
+                }}
+                disabled={loadingPurchases}
+              >
+                {loadingPurchases ? 'Refreshing...' : 'Refresh Orders'}
+              </button>
+            </div>
+          )}
+        </div>
+      </main>
+      <style jsx global>{globalStyles}</style>
     </div>
   );
 }
+
+function CreateListingForm({ onListingCreated, sellerId }: { onListingCreated: () => void, sellerId: string }) {
+  const [form, setForm] = useState({
+    name: '',
+    location: '',
+    pricePerUnit: '',
+    maxUnitsAvailable: '',
+    availableUnits: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setSuccess(false);
+    // Validate
+    if (!form.name || !form.location || !form.pricePerUnit || !form.maxUnitsAvailable || !form.availableUnits) {
+      setError('All fields are required.');
+      setLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch('/api/listings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sellerId,
+          name: form.name,
+          location: form.location,
+          pricePerUnit: Number(form.pricePerUnit),
+          maxUnitsAvailable: Number(form.maxUnitsAvailable),
+          availableUnits: Number(form.availableUnits),
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to create listing');
+      setForm({ name: '', location: '', pricePerUnit: '', maxUnitsAvailable: '', availableUnits: '' });
+      setSuccess(true);
+      onListingCreated();
+    } catch (err: any) {
+      setError(err.message || 'Failed to create listing');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} style={{ background: '#232b47', borderRadius: 14, padding: '1.5rem 1.25rem', marginBottom: 32, boxShadow: '0 2px 8px 0 rgba(59,130,246,0.08)', maxWidth: 500 }}>
+      <div style={{ fontWeight: 600, fontSize: 20, color: '#fff', marginBottom: 18 }}>Create New Listing</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <input name="name" placeholder="Name" value={form.name} onChange={handleChange} style={inputStyle} />
+        <input name="location" placeholder="Location" value={form.location} onChange={handleChange} style={inputStyle} />
+        <input name="pricePerUnit" placeholder="Price per Unit (BIJLEE)" type="number" min="0" value={form.pricePerUnit} onChange={handleChange} style={inputStyle} />
+        <input name="maxUnitsAvailable" placeholder="Max Units Available (kWh)" type="number" min="1" value={form.maxUnitsAvailable} onChange={handleChange} style={inputStyle} />
+        <input name="availableUnits" placeholder="Available Units (kWh)" type="number" min="0" value={form.availableUnits} onChange={handleChange} style={inputStyle} />
+        <button type="submit" disabled={loading} style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 0', fontWeight: 600, fontSize: 16, cursor: loading ? 'not-allowed' : 'pointer', marginTop: 8 }}>
+          {loading ? 'Creating...' : 'Create Listing'}
+        </button>
+        {error && <div style={{ color: '#f87171', fontSize: 15 }}>{error}</div>}
+        {success && <div style={{ color: '#22c55e', fontSize: 15 }}>Listing created!</div>}
+      </div>
+    </form>
+  );
+}
+
+const inputStyle = {
+  background: '#181f36',
+  color: '#fff',
+  border: '1px solid #3b82f6',
+  borderRadius: 8,
+  padding: '10px 12px',
+  fontSize: 16,
+  outline: 'none',
+};
+
+// Add these global styles
+const globalStyles = `
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.8; }
+}
+
+.energy-marker {
+  animation: pulse 2s infinite ease-in-out;
+}
+
+.location-details {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.map-container::-webkit-scrollbar {
+  height: 10px;
+}
+
+.map-container::-webkit-scrollbar-track {
+  background: #181f36;
+  border-radius: 10px;
+}
+
+.map-container::-webkit-scrollbar-thumb {
+  background: #3b82f6;
+  border-radius: 10px;
+}
+
+.map-container::-webkit-scrollbar-thumb:hover {
+  background: #2563eb;
+}
+`;

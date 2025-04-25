@@ -1,33 +1,27 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../auth/[...nextauth]/route';
-import { connectToDatabase } from '@/lib/mongodb';
+import Listing from '@/app/models/Listing';
+import connectDB from '@/app/lib/mongodb';
 
-// Export a POST method handler for creating listings
+// POST: Create a new listing
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
-    
-    if (!session?.user?.id) {
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
     const body = await request.json();
-    const { db } = await connectToDatabase();
-    
-    // Add the seller's ID to the listing
-    const listing = {
+    await connectDB();
+    const listing = await Listing.create({
       ...body,
-      sellerId: session.user.id,
+      sellerId: session.user.email,
       createdAt: new Date(),
       updatedAt: new Date()
-    };
-
-    const result = await db.collection("listings").insertOne(listing);
-    
+    });
     return NextResponse.json({
       message: 'Listing created successfully',
-      listing: { ...listing, _id: result.insertedId }
+      listing
     });
   } catch (error) {
     console.error('Error creating listing:', error);
@@ -37,27 +31,20 @@ export async function POST(request: Request) {
   }
 }
 
-// Export a GET method handler for fetching all listings
+// GET: Fetch all listings for the current user
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-    
-    if (!session?.user?.id) {
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const { db } = await connectToDatabase();
-    
-    // Find all listings for the current user
-    const listings = await db.collection("listings").find({
-      sellerId: session.user.id
-    }).toArray();
-
+    await connectDB();
+    const listings = await Listing.find({ sellerId: session.user.email }).sort({ createdAt: -1 });
     return NextResponse.json({ listings });
   } catch (error) {
     console.error('Error fetching listings:', error);
     return NextResponse.json({ 
-      error: 'Failed to fetch listings' 
+      error: error.message || 'Failed to fetch listings' 
     }, { status: 500 });
   }
 }

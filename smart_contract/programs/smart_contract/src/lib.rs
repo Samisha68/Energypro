@@ -89,3 +89,7 @@ pub struct PurchaseEvent {
     pub total_amount: u64,
     pub timestamp: i64,
 }
+
+// Dummy account to ensure non-empty accounts array in IDL
+#[account]
+pub struct Dummy {}

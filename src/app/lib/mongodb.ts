@@ -1,7 +1,14 @@
 import mongoose from 'mongoose';
+import { MongoClient } from 'mongodb';
 
 // Cache the mongoose connection
 let cachedConnection: typeof mongoose | null = null;
+
+// MongoClient for NextAuth
+const uri = process.env.MONGODB_URI;
+const client = new MongoClient(uri!);
+const clientPromise = client.connect();
+export { clientPromise };
 
 /**
  * Connect to MongoDB and cache the connection
