@@ -107,6 +107,3 @@ We welcome contributions from the community! To get started:
 
 Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for more details (or create one if it doesn't exist yet).
 
-## License
-
-This project is open source and available under the [MIT License](LICENSE).
