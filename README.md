@@ -9,7 +9,7 @@ Traditional energy markets are centralized and often inaccessible to small produ
 ## Features
 
 - **Unified Dashboard**: Seamlessly list energy for sale, browse available offers, and purchase energy—all from a single, intuitive dashboard.
-- **Google Authentication**: Secure sign-in and onboarding using your Google account.
+- **Secure Authentication**: Powered by Civic Auth for enterprise-grade security and seamless user experience.
 - **Blockchain-Powered Transactions**: All trades are recorded on the Solana blockchain for transparency and security.
 - **Solana Wallet Integration**: Connect your Solana wallet (Phantom, Solflare, etc.) for direct, trustless payments.
 - **Scalable Seller Support**: Currently, the seller address is hardcoded for demonstration. The architecture is designed to easily support multiple sellers in the future.
@@ -17,7 +17,7 @@ Traditional energy markets are centralized and often inaccessible to small produ
 
 ## How It Works
 
-1. **Sign in with Google** to access the platform.
+1. **Sign in with Civic Auth** to access the platform securely.
 2. **Connect your Solana wallet** to enable blockchain transactions.
 3. **List energy for sale** or **browse available energy** on the dashboard.
 4. **Buy or sell energy**—all transactions are securely processed and recorded on-chain.
@@ -28,7 +28,7 @@ Traditional energy markets are centralized and often inaccessible to small produ
 - **Backend**: Next.js API Routes
 - **Database**: MongoDB (with Mongoose)
 - **Blockchain**: Solana (Smart Contract + SPL Tokens)
-- **Authentication**: Google OAuth 2.0, JWT (for API)
+- **Authentication**: Civic Auth
 
 ## Prerequisites
 
@@ -36,6 +36,7 @@ Traditional energy markets are centralized and often inaccessible to small produ
 - MongoDB database (local or cloud, e.g., MongoDB Atlas)
 - Solana wallet (Phantom, Solflare, etc.)
 - Solana devnet tokens for testing
+- Civic Auth account and API credentials
 
 ## Getting Started
 
@@ -60,7 +61,17 @@ Copy the example environment file and update it with your configuration:
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your MongoDB connection string, Google OAuth credentials, and other required variables.
+Edit `.env.local` with your:
+- MongoDB connection string
+- Civic Auth credentials
+- Solana configuration
+- Other required variables
+
+Required environment variables:
+```env
+NEXT_PUBLIC_CIVIC_CLIENT_ID=your_civic_client_id
+NEXTAUTH_URL=http://localhost:3000
+```
 
 4. **Run the development server**
 
