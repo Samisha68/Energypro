@@ -1,9 +1,21 @@
 // middleware.ts
+import { authMiddleware } from '@civic/auth/nextjs/middleware'
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
+
+// Chain the Civic Auth middleware with our custom middleware
+const withCivicAuth = authMiddleware();
 
 export async function middleware(request: NextRequest) {
+  // First, let Civic Auth middleware handle the request
+  const civicResponse = await withCivicAuth(request);
+  
+  // If Civic Auth middleware returns a response, use it
+  if (civicResponse) {
+    return civicResponse;
+  }
+  
+  // Otherwise, continue with our custom middleware logic
   const { pathname } = request.nextUrl;
   
   // Skip middleware for all API routes and static resources
@@ -16,14 +28,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   
-  // Get token (authentication status)
-  const token = await getToken({
-    req: request,
-    secret: process.env.NEXTAUTH_SECRET
-  });
-  
   // Public paths that don't require authentication
-  const publicPaths = ['/', '/auth'];
+  const publicPaths = ['/', '/auth', '/auth/callback'];
   const isPublicPath = publicPaths.some(path => 
     pathname === path || pathname.startsWith(`${path}/`)
   );
@@ -31,14 +37,8 @@ export async function middleware(request: NextRequest) {
   // Simple redirect logic without caching or loop detection
   const url = request.nextUrl.clone();
   
-  // If on auth page and already authenticated, redirect to dashboard
-  if (pathname === '/auth' && token) {
-    url.pathname = '/dashboard';
-    return NextResponse.redirect(url);
-  }
-  
   // If trying to access protected route without authentication
-  if (!isPublicPath && !token) {
+  if (!isPublicPath) {
     url.pathname = '/auth';
     url.searchParams.set('callbackUrl', pathname);
     return NextResponse.redirect(url);
@@ -48,7 +48,18 @@ export async function middleware(request: NextRequest) {
   return NextResponse.next();
 }
 
-// Only run middleware on specific paths to reduce overhead
+export default authMiddleware();
+
 export const config = {
-  matcher: ['/dashboard/:path*', '/auth']
+  matcher: [
+    /*
+     * Match all request paths except:
+     * - _next directory (Next.js static files)
+     * - favicon.ico, sitemap.xml, robots.txt
+     * - image files
+     * - public files
+     * - auth routes
+     */
+    '/((?!_next|favicon.ico|sitemap.xml|robots.txt|.*\.jpg|.*\.png|.*\.svg|.*\.gif|api/auth|auth).*)',
+  ],
 };

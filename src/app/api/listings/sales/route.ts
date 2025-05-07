@@ -1,39 +1,43 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
-import connectDB from '@/app/lib/mongodb';
-import mongoose from 'mongoose';
+import { getUser } from "@civic/auth/nextjs";
+import { connectToDatabase } from "@/lib/mongodb";
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session?.user?.email) {
+    const user = await getUser();
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Use the same connectDB function as other routes
-    await connectDB();
+    const { db } = await connectToDatabase();
+    const sales = await db.collection("sales").find({ userId: user.id }).toArray();
     
-    // Access the db through the mongoose connection
-    const db = mongoose.connection.db;
-    
-    if (!db) {
-      throw new Error("Database connection not established");
-    }
-    
-    // Find all sales for the current seller
-    const sales = await db.collection("sales").find({
-      sellerEmail: session.user.email
-    }).toArray();
-
-    return NextResponse.json({ sales });
+    return NextResponse.json(sales);
   } catch (error) {
     console.error("Error fetching sales:", error);
-    console.error('Error details:', JSON.stringify(error, null, 2)); // More detailed error logging
-    return NextResponse.json(
-      { error: "Failed to fetch sales" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const { db } = await connectToDatabase();
+    
+    const result = await db.collection("sales").insertOne({
+      ...body,
+      userId: user.id,
+      createdAt: new Date(),
+    });
+    
+    return NextResponse.json({ id: result.insertedId });
+  } catch (error) {
+    console.error("Error creating sale:", error);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

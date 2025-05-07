@@ -1,6 +1,6 @@
 "use client";
 
-import { SessionProvider, useSession, signOut } from "next-auth/react";
+import { useUser } from "@civic/auth/react";
 import { useState, useEffect} from "react";
 import { useRouter } from 'next/navigation';
 
@@ -64,21 +64,19 @@ interface EnergyLocation {
 
 export default function Dashboard() {
   return (
-    <SessionProvider>
-      <SolanaProvider>
-        <DashboardWithSidebar />
-      </SolanaProvider>
-    </SessionProvider>
+    <SolanaProvider>
+      <DashboardWithSidebar />
+    </SolanaProvider>
   );
 }
 
 function DashboardWithSidebar() {
   const router = useRouter();
+  const { user, signOut } = useUser();
   const [activeSection, setActiveSection] = useState<'home' | 'buy' | 'sell' | 'orders'>('buy');
   const [listings, setListings] = useState<Listing[]>([]);
   const [loadingListings, setLoadingListings] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { data: session } = useSession();
   const [myListings, setMyListings] = useState<Listing[]>([]);
   const [loadingMyListings, setLoadingMyListings] = useState(false);
   const [myListingsError, setMyListingsError] = useState<string | null>(null);
@@ -113,6 +111,9 @@ function DashboardWithSidebar() {
   const sidebarWidth = 240;
 
   useEffect(() => {
+    if (!user) {
+      router.push('/auth');
+    }
     if (activeSection === 'buy') {
       fetchListings();
     }
@@ -123,7 +124,7 @@ function DashboardWithSidebar() {
       fetchMyPurchases();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, publicKey]);
+  }, [activeSection, publicKey, user, router]);
 
   async function fetchListings() {
     setLoadingListings(true);
@@ -358,89 +359,80 @@ function DashboardWithSidebar() {
     }
   };
 
+  const handleSignOut = async () => {
+    try {
+      // Redirect immediately
+      router.push('/auth');
+      // Sign out in the background
+      await signOut();
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: bgMain, color: textPrimary, fontFamily: 'Inter, Segoe UI, Arial, sans-serif' }}>
-      <aside
-        style={{
-          width: sidebarWidth,
-          background: bgSidebar,
-          padding: '2.5rem 1.5rem',
-          minHeight: '100vh',
-          boxShadow: '2px 0 8px 0 rgba(0,0,0,0.12)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
-        }}
+    <div className="flex h-screen bg-gray-900">
+      {/* Sidebar */}
+      <div 
+        className="fixed left-0 top-0 h-full bg-gray-800 text-white p-4"
+        style={{ width: sidebarWidth }}
       >
-        <div 
-          style={{ fontWeight: 700, fontSize: 28, marginBottom: 40, letterSpacing: 1, color: accent, cursor: 'pointer' }}
-          onClick={() => router.push('/')}
-        >
-          EnergyPro
-          <div style={{ height: 3, width: 40, background: accent, borderRadius: 2, marginTop: 4 }} />
-        </div>
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%' }}>
-          {[
-            { key: 'home', label: 'Home' },
-            { key: 'buy', label: 'Buy Energy' },
-            { key: 'sell', label: 'Sell Energy' },
-            { key: 'orders', label: 'My Orders' },
-          ].map(tab => (
+        <div className="flex flex-col h-full">
+          <div className="flex items-center space-x-2 mb-8">
+            <FaBolt className="text-blue-500 text-2xl" />
+            <span className="text-xl font-bold">EnergyPro</span>
+          </div>
+          
+          <nav className="flex-1">
             <button
-              key={tab.key}
-              onClick={() => setActiveSection(tab.key as any)}
-              style={{
-                background: activeSection === tab.key ? accent : 'transparent',
-                color: activeSection === tab.key ? '#fff' : textSecondary,
-                border: 'none',
-                borderRadius: 8,
-                textAlign: 'left',
-                fontSize: 18,
-                fontWeight: 500,
-                padding: '10px 18px',
-                cursor: 'pointer',
-                transition: 'background 0.2s, color 0.2s',
-                marginRight: 0,
-                boxShadow: activeSection === tab.key ? '0 2px 8px 0 rgba(59,130,246,0.15)' : 'none',
-              }}
+              onClick={() => setActiveSection('home')}
+              className={`w-full text-left px-4 py-2 rounded-lg mb-2 ${
+                activeSection === 'home' ? 'bg-blue-600' : 'hover:bg-gray-700'
+              }`}
             >
-              {tab.label}
+              Dashboard
             </button>
-          ))}
-        </nav>
-        <button
-          onClick={() => signOut()}
-          style={{
-            marginTop: 32,
-            background: '#232b47',
-            color: '#f87171',
-            border: 'none',
-            borderRadius: 8,
-            padding: '10px 18px',
-            fontWeight: 600,
-            fontSize: 16,
-            cursor: 'pointer',
-            width: '100%',
-            boxShadow: '0 2px 8px 0 rgba(59,130,246,0.08)',
-            transition: 'background 0.2s, color 0.2s',
-          }}
-        >
-          Sign Out
-        </button>
-        <div style={{ flex: 1 }} />
-        <div style={{ color: textSecondary, fontSize: 13, marginTop: 40, opacity: 0.7 }}>
-          © {new Date().getFullYear()} EnergyPro
+            <button
+              onClick={() => setActiveSection('buy')}
+              className={`w-full text-left px-4 py-2 rounded-lg mb-2 ${
+                activeSection === 'buy' ? 'bg-blue-600' : 'hover:bg-gray-700'
+              }`}
+            >
+              Buy Energy
+            </button>
+            <button
+              onClick={() => setActiveSection('sell')}
+              className={`w-full text-left px-4 py-2 rounded-lg mb-2 ${
+                activeSection === 'sell' ? 'bg-blue-600' : 'hover:bg-gray-700'
+              }`}
+            >
+              Sell Energy
+            </button>
+            <button
+              onClick={() => setActiveSection('orders')}
+              className={`w-full text-left px-4 py-2 rounded-lg mb-2 ${
+                activeSection === 'orders' ? 'bg-blue-600' : 'hover:bg-gray-700'
+              }`}
+            >
+              My Orders
+            </button>
+          </nav>
+
+          <div className="mt-auto">
+            <button
+              onClick={handleSignOut}
+              className="w-full text-left px-4 py-2 rounded-lg hover:bg-gray-700 text-red-400"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
-      </aside>
-      <main
-        style={{
-          flex: 1,
-          padding: '2.5rem 2.5rem',
-          background: bgMain,
-          minHeight: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
+      </div>
+
+      {/* Main Content */}
+      <div 
+        className="flex-1 ml-[240px] p-8 overflow-auto"
+        style={{ backgroundColor: bgMain }}
       >
         <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
           <WalletButtonClient />
@@ -710,7 +702,7 @@ function DashboardWithSidebar() {
           {activeSection === 'sell' && (
             <div>
               <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24, color: '#fff' }}>Sell Energy</h2>
-              <CreateListingForm onListingCreated={fetchMyListings} sellerId={session?.user?.email || ''} />
+              <CreateListingForm onListingCreated={fetchMyListings} sellerId={user?.email || ''} />
               <div style={{ marginTop: 40 }}>
                 <h3 style={{ fontSize: 22, fontWeight: 600, marginBottom: 18, color: '#fff' }}>My Listings</h3>
                 {loadingMyListings ? (
@@ -840,8 +832,7 @@ function DashboardWithSidebar() {
             </div>
           )}
         </div>
-      </main>
-      <style jsx global>{globalStyles}</style>
+      </div>
     </div>
   );
 }
@@ -925,43 +916,3 @@ const inputStyle = {
   fontSize: 16,
   outline: 'none',
 };
-
-// Add these global styles
-const globalStyles = `
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes pulse {
-  0% { transform: scale(1); opacity: 0.8; }
-  50% { transform: scale(1.1); opacity: 1; }
-  100% { transform: scale(1); opacity: 0.8; }
-}
-
-.energy-marker {
-  animation: pulse 2s infinite ease-in-out;
-}
-
-.location-details {
-  animation: fadeIn 0.3s ease-out forwards;
-}
-
-.map-container::-webkit-scrollbar {
-  height: 10px;
-}
-
-.map-container::-webkit-scrollbar-track {
-  background: #181f36;
-  border-radius: 10px;
-}
-
-.map-container::-webkit-scrollbar-thumb {
-  background: #3b82f6;
-  border-radius: 10px;
-}
-
-.map-container::-webkit-scrollbar-thumb:hover {
-  background: #2563eb;
-}
-`;
